@@ -89,7 +89,7 @@ Ray :: struct {
 }
 
 ray_color :: proc(r: Ray, world: []Hittable) -> Color {
-	hit, rec := hit_list(world, r, 0, INFINITY)
+	hit, rec := hit_list(world, r, {0, INFINITY})
 	if hit {
 		return 0.5 * (rec.normal + 1)
 	}
@@ -128,8 +128,6 @@ hr_set_face_normal :: proc(hr: ^HitRecord, r: Ray, outward_normal: v3) {
 	hr.normal = hr.front_face ? outward_normal : -outward_normal
 }
 
-HitProc :: proc(r: Ray, ray_tmin, ray_tmax: f32) -> (bool, HitRecord)
-
 Hittable :: union {
 	Sphere,
 }
@@ -140,7 +138,7 @@ Sphere :: struct {
 }
 
 
-hit :: proc(hittable: Hittable, r: Ray, ray_tmin, ray_tmax: f32) -> (bool, HitRecord) {
+hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
 	switch inner in hittable {
 	case Sphere:
 		sphere := inner
@@ -158,9 +156,10 @@ hit :: proc(hittable: Hittable, r: Ray, ray_tmin, ray_tmax: f32) -> (bool, HitRe
 
 		// // Find the nearest root that lies in the acceptable range.
 		root := (h - sqrtd) / a
-		if root <= ray_tmin || ray_tmax <= root {
+
+		if !interval_surrounds(interval, root) {
 			root = (h + sqrtd) / a
-			if root <= ray_tmin || ray_tmax <= root do return false, {}
+			if !interval_surrounds(interval, root) do return false, {}
 		}
 
 		rec : HitRecord
@@ -176,13 +175,13 @@ hit :: proc(hittable: Hittable, r: Ray, ray_tmin, ray_tmax: f32) -> (bool, HitRe
 	}
 }
 
-hit_list :: proc(hittables: []Hittable, r: Ray, ray_tmin, ray_tmax: f32) -> (bool, HitRecord) {
+hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
 	temp_rec : HitRecord
 	hit_anything: bool
-	closest_so_far := ray_tmax
+	closest_so_far := interval.max
 
 	for hittable in hittables {
-		did_hit, rec := hit(hittable, r, ray_tmin, closest_so_far)
+		did_hit, rec := hit(hittable, r, {interval.min, closest_so_far})
 		if did_hit {
 			hit_anything = true
 			closest_so_far = rec.t
@@ -213,3 +212,27 @@ hit_list :: proc(hittables: []Hittable, r: Ray, ray_tmin, ray_tmax: f32) -> (boo
 degrees_to_radians :: proc(degrees: f32) -> f32 {
 	return degrees * PI / 180
 }
+
+// Interval
+
+Interval :: struct {
+	min, max: f32
+}
+
+interval_new :: proc() -> Interval {
+	return {+INFINITY, -INFINITY}
+}
+
+interval_contains :: proc(i: Interval, x: f32) -> bool {
+	return i.min <= x && x <= i.max;
+}
+
+interval_surrounds :: proc(i: Interval, x: f32) -> bool {
+	return i.min < x && x < i.max;
+}
+
+@rodata
+interval_empty := Interval{+INFINITY, -INFINITY}
+
+@rodata
+interval_universe := Interval{-INFINITY, +INFINITY}
