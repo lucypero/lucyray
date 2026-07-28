@@ -6,6 +6,7 @@ import "core:io"
 import "core:strings"
 import "core:math/linalg"
 import "core:math"
+import "core:math/rand"
 
 // constants
 
@@ -42,9 +43,18 @@ ray_at :: proc(r: Ray, t: f32) -> point3 {
 write_color :: proc(sb: ^strings.Builder, pixel_color: Color) {
 
 	// Translate the [0,1] component values to the byte range [0,255].
+	// intensity := Interval{0, 0.999}
+
+	// rbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.r))
+	// gbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.g))
+	// bbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.b))
+
+	// debug: remove clamp
+
 	rbyte := cast(int)(255.999 * pixel_color.r)
 	gbyte := cast(int)(255.999 * pixel_color.g)
 	bbyte := cast(int)(255.999 * pixel_color.b)
+
 
 	fmt.sbprintf(sb, "%v %v %v\n", rbyte, gbyte, bbyte)
 }
@@ -167,6 +177,10 @@ interval_surrounds :: proc(i: Interval, x: f32) -> bool {
 	return i.min < x && x < i.max;
 }
 
+interval_clamp :: proc(i: Interval, x: f32) -> f32 {
+	return clamp(x, i.min, i.max)
+}
+
 @rodata
 interval_empty := Interval{+INFINITY, -INFINITY}
 
@@ -180,7 +194,10 @@ Camera :: struct {
 	// Public
 	image_width: int,
 
+	samples_per_pixel: int, // Count of random samples for each pixel
+
 	// Private
+	pixel_samples_scale: f32, // Color scale factor for a sum of pixel samples
 	sb: strings.Builder,
 	pixel00_loc : point3,
 	image_height: int,
@@ -190,12 +207,19 @@ Camera :: struct {
 }
 
 camera_init :: proc() -> (cam: Camera) {
+
+	// Setting public fields
+
 	focal_length :: 1
 	aspect_ratio :: 16.0 / 9.0
+	cam.image_width = 400
+	cam.samples_per_pixel = 1
 
+	// /end
 
 	cam.sb = strings.builder_make()
-	cam.image_width = 400
+	cam.pixel_samples_scale = 1 / cast(f32)cam.samples_per_pixel;
+
 	cam.image_height = max(1, cast(int)(cast(f32)cam.image_width / aspect_ratio))
 
 	viewport_width : f32 = viewport_height * (cast(f32)cam.image_width / cast(f32)cam.image_height)
@@ -225,13 +249,22 @@ camera_render :: proc(cam: ^Camera, world: []Hittable) {
 
 		for i:= 0; i < cam.image_width ; i+= 1 {
 
-			pixel_center : v3 = cam.pixel00_loc + (cast(f32)i * cam.pixel_delta_u) + (cast(f32)j * cam.pixel_delta_v)
-			ray_direction : v3 = pixel_center - cam.center
+			pixel_color : Color 
 
-			ray := Ray{cam.center, ray_direction}
+			for i in 0 ..< cam.samples_per_pixel {
+				r: Ray = camera_get_ray(cam^, i, j)
+				pixel_color += camera_ray_color(cam^, r, world);
+			}
 
-			pixel_color := camera_ray_color(cam^, ray, world)
-			write_color(&cam.sb, pixel_color)
+			write_color(&cam.sb, cam.pixel_samples_scale * pixel_color)
+
+			// old
+
+			// pixel_center : v3 = cam.pixel00_loc + (cast(f32)i * cam.pixel_delta_u) + (cast(f32)j * cam.pixel_delta_v)
+			// ray_direction : v3 = pixel_center - cam.center
+			// ray := Ray{cam.center, ray_direction}
+			// pixel_color = camera_ray_color(cam^, ray, world)
+			// write_color(&cam.sb, pixel_color)
 		}
 	}
 
@@ -254,3 +287,42 @@ camera_ray_color :: proc(cam: Camera, r: Ray, world: []Hittable) -> Color {
 	a := 0.5 * (unit_direction.y + 1)
 	return (1 - a) * Color{1,1,1} + a * Color{0.5, 0.7, 1.0}
 }
+
+// Construct a camera ray originating from the origin and directed at randomly sampled
+// point around the pixel location i, j.
+// ray get_ray(int i, int j) const {
+camera_get_ray :: proc(cam: Camera, i, j: int) -> Ray {
+
+	offset := sample_square();
+	pixel_sample := cam.pixel00_loc +
+	((f32(i) + offset.x) * cam.pixel_delta_u) +
+	((f32(j) + offset.y) * cam.pixel_delta_v)
+
+	// removing offset and stuff
+
+	pixel_sample = cam.pixel00_loc +
+	((f32(i)) * cam.pixel_delta_u) +
+	((f32(j)) * cam.pixel_delta_v)
+
+	ray_origin := cam.center
+	ray_direction := pixel_sample - ray_origin
+
+	return Ray{ray_origin, ray_direction}
+}
+
+// Returns the vector to a random point in the [-.5,-.5]-[+.5,+.5] unit square.
+sample_square :: proc() -> v3 {
+	return v3{random_double() - 0.5, random_double() - 0.5, 0}
+}
+
+// Returns a random real in [0,1).
+random_double_norm :: proc() -> f32 {
+	return rand.float32()
+}
+
+// Returns a random real in [min,max).
+random_double_minmax :: proc(min, max: f32) -> f32 {
+	return rand.float32_range(min, max)
+}
+
+random_double :: proc{random_double_norm, random_double_minmax}
