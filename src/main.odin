@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 import "core:os"
-import "core:io"
 import "core:strings"
 import "core:math/linalg"
 import "core:math"
@@ -41,20 +40,12 @@ ray_at :: proc(r: Ray, t: f32) -> point3 {
 }
 
 write_color :: proc(sb: ^strings.Builder, pixel_color: Color) {
-
 	// Translate the [0,1] component values to the byte range [0,255].
-	// intensity := Interval{0, 0.999}
+	intensity := Interval{0, 0.999}
 
-	// rbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.r))
-	// gbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.g))
-	// bbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.b))
-
-	// debug: remove clamp
-
-	rbyte := cast(int)(255.999 * pixel_color.r)
-	gbyte := cast(int)(255.999 * pixel_color.g)
-	bbyte := cast(int)(255.999 * pixel_color.b)
-
+	rbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.r))
+	gbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.g))
+	bbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.b))
 
 	fmt.sbprintf(sb, "%v %v %v\n", rbyte, gbyte, bbyte)
 }
@@ -139,22 +130,6 @@ hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, Hi
 }
 
 
-// bool hit(const ray& r, double ray_tmin, double ray_tmax, hit_record& rec) const override {
-//     hit_record temp_rec;
-//     bool hit_anything = false;
-//     auto closest_so_far = ray_tmax;
-
-//     for (const auto& object : objects) {
-//         if (object->hit(r, ray_tmin, closest_so_far, temp_rec)) {
-//             hit_anything = true;
-//             closest_so_far = temp_rec.t;
-//             rec = temp_rec;
-//         }
-//     }
-
-//     return hit_anything;
-// }
-
 degrees_to_radians :: proc(degrees: f32) -> f32 {
 	return degrees * PI / 180
 }
@@ -213,7 +188,7 @@ camera_init :: proc() -> (cam: Camera) {
 	focal_length :: 1
 	aspect_ratio :: 16.0 / 9.0
 	cam.image_width = 400
-	cam.samples_per_pixel = 1
+	cam.samples_per_pixel = 10
 
 	// /end
 
@@ -251,20 +226,12 @@ camera_render :: proc(cam: ^Camera, world: []Hittable) {
 
 			pixel_color : Color 
 
-			for i in 0 ..< cam.samples_per_pixel {
+			for _ in 0 ..< cam.samples_per_pixel {
 				r: Ray = camera_get_ray(cam^, i, j)
 				pixel_color += camera_ray_color(cam^, r, world);
 			}
 
 			write_color(&cam.sb, cam.pixel_samples_scale * pixel_color)
-
-			// old
-
-			// pixel_center : v3 = cam.pixel00_loc + (cast(f32)i * cam.pixel_delta_u) + (cast(f32)j * cam.pixel_delta_v)
-			// ray_direction : v3 = pixel_center - cam.center
-			// ray := Ray{cam.center, ray_direction}
-			// pixel_color = camera_ray_color(cam^, ray, world)
-			// write_color(&cam.sb, pixel_color)
 		}
 	}
 
@@ -297,12 +264,6 @@ camera_get_ray :: proc(cam: Camera, i, j: int) -> Ray {
 	pixel_sample := cam.pixel00_loc +
 	((f32(i) + offset.x) * cam.pixel_delta_u) +
 	((f32(j) + offset.y) * cam.pixel_delta_v)
-
-	// removing offset and stuff
-
-	pixel_sample = cam.pixel00_loc +
-	((f32(i)) * cam.pixel_delta_u) +
-	((f32(j)) * cam.pixel_delta_v)
 
 	ray_origin := cam.center
 	ray_direction := pixel_sample - ray_origin
