@@ -34,7 +34,6 @@ Ray :: struct {
 	dir: v3
 }
 
-
 ray_at :: proc(r: Ray, t: f32) -> point3 {
 	return r.orig + t * r.dir
 }
@@ -43,9 +42,14 @@ write_color :: proc(sb: ^strings.Builder, pixel_color: Color) {
 	// Translate the [0,1] component values to the byte range [0,255].
 	intensity := Interval{0, 0.999}
 
-	rbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.r))
-	gbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.g))
-	bbyte := cast(int)(256 * interval_clamp(intensity, pixel_color.b))
+	// Apply a linear to gamma transform for gamma 2
+	r := linear_to_gamma(pixel_color.r);
+	g := linear_to_gamma(pixel_color.g);
+	b := linear_to_gamma(pixel_color.b);
+
+	rbyte := cast(int)(256 * interval_clamp(intensity, r))
+	gbyte := cast(int)(256 * interval_clamp(intensity, g))
+	bbyte := cast(int)(256 * interval_clamp(intensity, b))
 
 	fmt.sbprintf(sb, "%v %v %v\n", rbyte, gbyte, bbyte)
 }
@@ -53,6 +57,7 @@ write_color :: proc(sb: ^strings.Builder, pixel_color: Color) {
 
 HitRecord :: struct {
 	p: point3,
+	mat: ^Material,
 	normal: v3,
 	t: f32,
 	front_face: bool
@@ -72,8 +77,8 @@ Hittable :: union {
 Sphere :: struct {
 	center: point3,
 	radius: f32,
+	mat: ^Material, // TODO: remember to initialize this
 }
-
 
 hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
 	switch inner in hittable {
@@ -102,6 +107,7 @@ hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord)
 		rec : HitRecord
 		rec.t = root
 		rec.p = ray_at(r, rec.t)
+		rec.mat = sphere.mat
 		outward_normal := (rec.p - sphere.center) / sphere.radius;
 		hr_set_face_normal(&rec, r, outward_normal);
 
@@ -170,6 +176,7 @@ Camera :: struct {
 	image_width: int,
 
 	samples_per_pixel: int, // Count of random samples for each pixel
+	max_depth: int,
 
 	// Private
 	pixel_samples_scale: f32, // Color scale factor for a sum of pixel samples
@@ -189,6 +196,7 @@ camera_init :: proc() -> (cam: Camera) {
 	aspect_ratio :: 16.0 / 9.0
 	cam.image_width = 400
 	cam.samples_per_pixel = 10
+	cam.max_depth = 10
 
 	// /end
 
@@ -228,7 +236,7 @@ camera_render :: proc(cam: ^Camera, world: []Hittable) {
 
 			for _ in 0 ..< cam.samples_per_pixel {
 				r: Ray = camera_get_ray(cam^, i, j)
-				pixel_color += camera_ray_color(cam^, r, world);
+				pixel_color += camera_ray_color(cam^, r, cam.max_depth, world);
 			}
 
 			write_color(&cam.sb, cam.pixel_samples_scale * pixel_color)
@@ -244,15 +252,26 @@ camera_render :: proc(cam: ^Camera, world: []Hittable) {
 	strings.builder_reset(&cam.sb)
 }
 
-camera_ray_color :: proc(cam: Camera, r: Ray, world: []Hittable) -> Color {
-	hit, rec := hit_list(world, r, {0, INFINITY})
+camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: []Hittable) -> Color {
+
+	// If we've exceeded the ray bounce limit, no more light is gathered.
+	if depth <= 0 do return Color{0,0,0}
+
+	// passing a limig min w a small number to avoid shadow acne
+	hit, rec := hit_list(world, r, {0.001, INFINITY})
 	if hit {
-		return 0.5 * (rec.normal + 1)
+		direction := rec.normal + v3_random_unit_vector()
+		return 0.5 * camera_ray_color(cam, Ray{rec.p, direction}, depth - 1, world);
 	}
 
 	unit_direction := linalg.vector_normalize(r.dir)
 	a := 0.5 * (unit_direction.y + 1)
 	return (1 - a) * Color{1,1,1} + a * Color{0.5, 0.7, 1.0}
+}
+
+linear_to_gamma :: proc(linear_component: f32) -> f32 {
+	if linear_component > 0 do return linalg.sqrt(linear_component)
+	return 0
 }
 
 // Construct a camera ray originating from the origin and directed at randomly sampled
@@ -287,3 +306,35 @@ random_double_minmax :: proc(min, max: f32) -> f32 {
 }
 
 random_double :: proc{random_double_norm, random_double_minmax}
+
+v3_random_one :: proc () -> v3 {
+	return v3{random_double(), random_double(), random_double()}
+}
+
+v3_random_range :: proc(min, max: f32) -> v3 {
+	return v3{random_double(min,max), random_double(min,max), random_double(min,max)}
+}
+
+v3_random :: proc{v3_random_one, v3_random_range}
+
+v3_random_unit_vector :: proc() -> v3 {
+	for {
+		p := v3_random(-1,1);
+		lensq := linalg.length2(p)
+		if (1e-160 < lensq && lensq <= 1) do return p / linalg.sqrt(lensq)
+	}
+}
+
+random_on_hemisphere :: proc(normal: v3) -> v3 {
+	on_unit_sphere := v3_random_unit_vector();
+	// In the same hemisphere as the normal
+	if linalg.dot(on_unit_sphere, normal) > 0 do return on_unit_sphere
+	return -on_unit_sphere;
+}
+
+Material :: struct {
+	// u can have parameters in here
+
+	// scatter proc
+	scatter_proc : proc(ray_in: Ray, rec: HitRecord) -> (ray: Ray, attenuation: Color, scattered: Ray)
+}
