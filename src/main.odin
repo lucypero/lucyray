@@ -22,8 +22,15 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	world := make([dynamic]Hittable, 0, 20)
-	append(&world, Sphere{{0, 0, -1}, 0.5})
-	append(&world, Sphere{{0, -100.5, -1}, 100})
+
+	red_marble := Material{scatter_proc = proc(ray_in: Ray, rec: HitRecord) -> (ray: Ray, attenuation: Color, scattered: Ray) {
+
+		// ?? do something here
+		return Ray{}, Color{}, Ray{}
+	}}
+	
+	append(&world, Sphere{{0, 0, -1}, 0.5, &red_marble})
+	append(&world, Sphere{{0, -100.5, -1}, 100, &red_marble})
 
 	cam := camera_init()
 	camera_render(&cam, world[:])
