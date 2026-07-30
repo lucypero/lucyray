@@ -25,8 +25,8 @@ main :: proc() {
 
 	material_ground := Material{albedo = {0.8, 0.8, 0}, type = .Lambertian}
 	material_center := Material{albedo = {0.1, 0.2, 0.5}, type = .Lambertian}
-	material_left := Material{albedo = {0.8, 0.8, 0.8}, type = .Metal}
-	material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal}
+	material_left := Material{albedo = {0.8, 0.8, 0.8}, type = .Metal, fuzz = 0.3}
+	material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal, fuzz = 1.0}
 
 	append(&world, Sphere{{0, -100.5, -1}, 100, &material_ground})
 
@@ -269,8 +269,12 @@ camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: []Hittable) -> 
 	// passing a limig min w a small number to avoid shadow acne
 	hit, rec := hit_list(world, r, {0.001, INFINITY})
 	if hit {
-		attenuation, scatter := material_scatter(rec.mat^, r, rec)
-		return attenuation * camera_ray_color(cam, scatter, depth - 1, world)
+		attenuation, scatter, did_scatter := material_scatter(rec.mat^, r, rec)
+		if did_scatter {
+			return attenuation * camera_ray_color(cam, scatter, depth - 1, world)
+		} else {
+			return {}
+		}
 	}
 
 	unit_direction := linalg.vector_normalize(r.dir)
@@ -357,10 +361,13 @@ Material_Type :: enum {
 
 Material :: struct {
 	albedo: Color,
+	fuzz: f32,
 	type: Material_Type,
 }
 
-material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuation: Color, scattered: Ray) {
+material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuation: Color, scattered: Ray, did_scatter: bool) {
+	did_scatter = true
+
 	switch mat.type {
 	case .Lambertian:
 		scatter_direction := rec.normal + v3_random_unit_vector()
@@ -374,8 +381,10 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 		return
 	case .Metal:
 		reflected := v3_reflect(ray_in.dir, rec.normal)
+		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
 		scattered = Ray{rec.p, reflected}
 		attenuation = mat.albedo
+		did_scatter = linalg.dot(scattered.dir, rec.normal) > 0
 		return
 	}
 
