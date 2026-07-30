@@ -25,13 +25,15 @@ main :: proc() {
 
 	material_ground := Material{albedo = {0.8, 0.8, 0}, type = .Lambertian}
 	material_center := Material{albedo = {0.1, 0.2, 0.5}, type = .Lambertian}
-	material_left := Material{albedo = {0.8, 0.8, 0.8}, type = .Metal, fuzz = 0.3}
+	material_left := Material{type = .Dielectric, refraction_index = 1.5}
+	material_bubble := Material{type = .Dielectric, refraction_index = 1.0 / 1.5}
 	material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal, fuzz = 1.0}
 
 	append(&world, Sphere{{0, -100.5, -1}, 100, &material_ground})
 
 	append(&world, Sphere{{0, 0, -1.2}, 0.5, &material_center})
 	append(&world, Sphere{{-1, 0, -1.0}, 0.5, &material_left})
+	append(&world, Sphere{{-1, 0, -1.0}, 0.4, &material_bubble})
 	append(&world, Sphere{{1, 0, -1.0}, 0.5, &material_right})
 
 	cam := camera_init()
@@ -347,6 +349,13 @@ v3_reflect :: proc(v: v3, n: v3) -> v3 {
 	return v - 2*linalg.dot(v,n)*n;
 }
 
+v3_refract :: proc(uv: v3, n: v3, etai_over_etat : f32) -> v3 {
+	cos_theta := min(linalg.dot(-uv, n), 1.0)
+	r_out_perp : v3 = etai_over_etat * (uv + cos_theta*n)
+	r_out_parallel : v3 = -linalg.sqrt(abs(1.0 - linalg.length2(r_out_perp))) * n
+	return r_out_perp + r_out_parallel
+}
+
 random_on_hemisphere :: proc(normal: v3) -> v3 {
 	on_unit_sphere := v3_random_unit_vector();
 	// In the same hemisphere as the normal
@@ -356,13 +365,25 @@ random_on_hemisphere :: proc(normal: v3) -> v3 {
 
 Material_Type :: enum {
 	Lambertian,
-	Metal
+	Metal,
+	Dielectric
 }
 
 Material :: struct {
 	albedo: Color,
 	fuzz: f32,
+
+	// Refractive index in vacuum or air, or the ratio of the material's refractive index over
+	// the refractive index of the enclosing media
+	refraction_index: f32,
 	type: Material_Type,
+}
+
+reflectance :: proc(cosine: f32, refraction_index: f32) -> f32 {
+	// Use Schlick's approximation for reflectance.
+	r0 := (1 - refraction_index) / (1 + refraction_index)
+	r0 = r0*r0;
+	return r0 + (1-r0)*linalg.pow((1 - cosine),5)
 }
 
 material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuation: Color, scattered: Ray, did_scatter: bool) {
@@ -386,6 +407,25 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 		attenuation = mat.albedo
 		did_scatter = linalg.dot(scattered.dir, rec.normal) > 0
 		return
+	case .Dielectric:
+		attenuation = Color{1.0, 1.0, 1.0}
+		ri : f32 = rec.front_face ? (1.0/mat.refraction_index) : mat.refraction_index
+		unit_direction : v3 = linalg.normalize(ray_in.dir)
+
+		cos_theta : f32 = min(linalg.dot(-unit_direction, rec.normal), 1.0)
+		sin_theta : f32 = linalg.sqrt(1.0 - cos_theta*cos_theta)
+
+		cannot_refract : bool = ri * sin_theta > 1.0
+		direction: v3
+
+		if (cannot_refract || reflectance(cos_theta, ri) > random_double()) {
+			direction = v3_reflect(unit_direction, rec.normal)
+		}
+		else {
+			direction = v3_refract(unit_direction, rec.normal, ri)
+		}
+
+		scattered = Ray{rec.p, direction}
 	}
 
 	return
