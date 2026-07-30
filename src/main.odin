@@ -23,14 +23,16 @@ mag :: linalg.vector_length
 main :: proc() {
 	world := make([dynamic]Hittable, 0, 20)
 
-	red_marble := Material{scatter_proc = proc(ray_in: Ray, rec: HitRecord) -> (ray: Ray, attenuation: Color, scattered: Ray) {
+	material_ground := Material{albedo = {0.8, 0.8, 0}, type = .Lambertian}
+	material_center := Material{albedo = {0.1, 0.2, 0.5}, type = .Lambertian}
+	material_left := Material{albedo = {0.8, 0.8, 0.8}, type = .Metal}
+	material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal}
 
-		// ?? do something here
-		return Ray{}, Color{}, Ray{}
-	}}
-	
-	append(&world, Sphere{{0, 0, -1}, 0.5, &red_marble})
-	append(&world, Sphere{{0, -100.5, -1}, 100, &red_marble})
+	append(&world, Sphere{{0, -100.5, -1}, 100, &material_ground})
+
+	append(&world, Sphere{{0, 0, -1.2}, 0.5, &material_center})
+	append(&world, Sphere{{-1, 0, -1.0}, 0.5, &material_left})
+	append(&world, Sphere{{1, 0, -1.0}, 0.5, &material_right})
 
 	cam := camera_init()
 	camera_render(&cam, world[:])
@@ -202,7 +204,7 @@ camera_init :: proc() -> (cam: Camera) {
 	focal_length :: 1
 	aspect_ratio :: 16.0 / 9.0
 	cam.image_width = 400
-	cam.samples_per_pixel = 10
+	cam.samples_per_pixel = 50
 	cam.max_depth = 10
 
 	// /end
@@ -267,8 +269,8 @@ camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: []Hittable) -> 
 	// passing a limig min w a small number to avoid shadow acne
 	hit, rec := hit_list(world, r, {0.001, INFINITY})
 	if hit {
-		direction := rec.normal + v3_random_unit_vector()
-		return 0.5 * camera_ray_color(cam, Ray{rec.p, direction}, depth - 1, world);
+		attenuation, scatter := material_scatter(rec.mat^, r, rec)
+		return attenuation * camera_ray_color(cam, scatter, depth - 1, world)
 	}
 
 	unit_direction := linalg.vector_normalize(r.dir)
@@ -332,6 +334,15 @@ v3_random_unit_vector :: proc() -> v3 {
 	}
 }
 
+v3_is_near_zero :: proc(v: v3) -> bool {
+	s : f32 = 1e-8
+	return abs(v.x) < s && (abs(v.y) < s) && (abs(v.z) < s)
+}
+
+v3_reflect :: proc(v: v3, n: v3) -> v3 {
+	return v - 2*linalg.dot(v,n)*n;
+}
+
 random_on_hemisphere :: proc(normal: v3) -> v3 {
 	on_unit_sphere := v3_random_unit_vector();
 	// In the same hemisphere as the normal
@@ -339,9 +350,34 @@ random_on_hemisphere :: proc(normal: v3) -> v3 {
 	return -on_unit_sphere;
 }
 
-Material :: struct {
-	// u can have parameters in here
+Material_Type :: enum {
+	Lambertian,
+	Metal
+}
 
-	// scatter proc
-	scatter_proc : proc(ray_in: Ray, rec: HitRecord) -> (ray: Ray, attenuation: Color, scattered: Ray)
+Material :: struct {
+	albedo: Color,
+	type: Material_Type,
+}
+
+material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuation: Color, scattered: Ray) {
+	switch mat.type {
+	case .Lambertian:
+		scatter_direction := rec.normal + v3_random_unit_vector()
+
+		if v3_is_near_zero(scatter_direction) {
+			scatter_direction = rec.normal
+		}
+
+		scattered = Ray{rec.p, scatter_direction}
+		attenuation = mat.albedo
+		return
+	case .Metal:
+		reflected := v3_reflect(ray_in.dir, rec.normal)
+		scattered = Ray{rec.p, reflected}
+		attenuation = mat.albedo
+		return
+	}
+
+	return
 }
