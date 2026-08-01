@@ -23,18 +23,32 @@ mag :: linalg.vector_length
 main :: proc() {
 	world := make([dynamic]Hittable, 0, 20)
 
-	material_ground := Material{albedo = {0.8, 0.8, 0}, type = .Lambertian}
-	material_center := Material{albedo = {0.1, 0.2, 0.5}, type = .Lambertian}
-	material_left := Material{type = .Dielectric, refraction_index = 1.5}
-	material_bubble := Material{type = .Dielectric, refraction_index = 1.0 / 1.5}
-	material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal, fuzz = 1.0}
 
-	append(&world, Sphere{{0, -100.5, -1}, 100, &material_ground})
 
-	append(&world, Sphere{{0, 0, -1.2}, 0.5, &material_center})
-	append(&world, Sphere{{-1, 0, -1.0}, 0.5, &material_left})
-	append(&world, Sphere{{-1, 0, -1.0}, 0.4, &material_bubble})
-	append(&world, Sphere{{1, 0, -1.0}, 0.5, &material_right})
+	material_ground := Material{albedo = {0.8,0.8,0}, type = .Lambertian}
+	material_center := Material{albedo = {0.1,0.2,0.5}, type = .Lambertian}
+
+	material_left := Material{albedo = {0,0,1}, type = .Dielectric, refraction_index = 1.5}
+	material_bubble := Material{albedo = {1,0,0}, type = .Dielectric, refraction_index = 1 / 1.5}
+
+	material_right := Material{albedo = {0.8,0.6,0.2}, type = .Metal, fuzz = 1}
+
+	append(&world, Sphere{{ 0.0, -100.5, -1.0}, 100.0, &material_ground})
+	append(&world, Sphere{{ 0.0,    0.0, -1.2},   0.5, &material_center})
+	append(&world, Sphere{{-1.0,    0.0, -1.0},   0.5, &material_left})
+	append(&world, Sphere{{-1.0,    0.0, -1.0},   0.4, &material_bubble})
+	append(&world, Sphere{{ 1.0,    0.0, -1.0},   0.5, &material_right})
+
+	// material_ground := Material{albedo = {0.8, 0.8, 0}, type = .Lambertian}
+	// material_center := Material{albedo = {0.1, 0.2, 0.5}, type = .Lambertian}
+	// material_left := Material{type = .Dielectric, refraction_index = 1.5}
+	// material_bubble := Material{type = .Dielectric, refraction_index = 1.0 / 1.5}
+	// material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal, fuzz = 1.0}
+	// append(&world, Sphere{{0, -100.5, -1}, 100, &material_ground})
+	// append(&world, Sphere{{0, 0, -1.2}, 0.5, &material_center})
+	// append(&world, Sphere{{-1, 0, -1.0}, 0.5, &material_left})
+	// append(&world, Sphere{{-1, 0, -1.0}, 0.4, &material_bubble})
+	// append(&world, Sphere{{1, 0, -1.0}, 0.5, &material_right})
 
 	cam := camera_init()
 	camera_render(&cam, world[:])
@@ -188,6 +202,11 @@ Camera :: struct {
 
 	samples_per_pixel: int, // Count of random samples for each pixel
 	max_depth: int,
+	vfov: f32, // vertical view angle (field of view)
+
+	lookfrom : point3,   // Point camera is looking from
+	lookat   :point3,  // Point camera is looking at
+	vup      :v3,     // Camera-relative "up" direction
 
 	// Private
 	pixel_samples_scale: f32, // Color scale factor for a sum of pixel samples
@@ -196,38 +215,56 @@ Camera :: struct {
 	image_height: int,
 	center: point3,
 	pixel_delta_u : v3,
-	pixel_delta_v : v3
+	pixel_delta_v : v3,
+	u,v,w: v3
 }
 
 camera_init :: proc() -> (cam: Camera) {
 
 	// Setting public fields
 
-	focal_length :: 1
 	aspect_ratio :: 16.0 / 9.0
 	cam.image_width = 400
 	cam.samples_per_pixel = 50
 	cam.max_depth = 10
+	cam.vfov = 20
+
+	cam.lookfrom = {-2,2,1}
+	cam.lookat = {0,0,-1}
+	cam.vup = {0,1,0}
 
 	// /end
+
+	cam.center = cam.lookfrom
 
 	cam.sb = strings.builder_make()
 	cam.pixel_samples_scale = 1 / cast(f32)cam.samples_per_pixel;
 
 	cam.image_height = max(1, cast(int)(cast(f32)cam.image_width / aspect_ratio))
 
+	// Determine viewport dimensions.
+	focal_length := linalg.length(cam.lookfrom - cam.lookat)
+	theta := degrees_to_radians(cam.vfov)
+	h := linalg.tan(theta/2)
+	viewport_height := 2 * h * focal_length
+
 	viewport_width : f32 = viewport_height * (cast(f32)cam.image_width / cast(f32)cam.image_height)
 
+	// Calculate the u,v,w unit basis vectors for the camera coordinate frame.
+	cam.w = linalg.normalize(cam.lookfrom - cam.lookat);
+	cam.u = linalg.normalize(linalg.cross(cam.vup, cam.w));
+	cam.v = linalg.cross(cam.w, cam.u);
+
 	// Calculate the vectors across the horizontal and down the vertical viewport edges.
-	viewport_u := v3{viewport_width, 0, 0}
-	viewport_v := v3{0, -viewport_height, 0}
+	viewport_u := viewport_width * cam.u // Vector across viewport horizontal edge
+	viewport_v := viewport_height * -cam.v // Vector down viewport vertical edge
 
 	// Calculate the horizontal and vertical delta vectors from pixel to pixel.
 	cam.pixel_delta_u = viewport_u / cast(f32)cam.image_width;
 	cam.pixel_delta_v = viewport_v / cast(f32)cam.image_height;
 
 	// Calculate the location of the upper left pixel.
-	viewport_upper_left : point3 = cam.center - v3{0, 0, focal_length} - viewport_u / 2 - viewport_v / 2
+	viewport_upper_left : point3 = cam.center - (focal_length * cam.w) - viewport_u / 2 - viewport_v / 2
 	cam.pixel00_loc = viewport_upper_left + 0.5 * (cam.pixel_delta_u + cam.pixel_delta_v)
 
 	return cam
