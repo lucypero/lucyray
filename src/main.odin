@@ -23,31 +23,46 @@ mag :: linalg.vector_length
 main :: proc() {
 	world := make([dynamic]Hittable, 0, 20)
 
-	material_ground := Material{albedo = {0.8,0.8,0}, type = .Lambertian}
-	material_center := Material{albedo = {0.1,0.2,0.5}, type = .Lambertian}
+	material_ground := Material{albedo = {0.5,0.5,0.5}, type = .Lambertian}
+	append(&world, Sphere{{ 0.0, -1000, 0}, 1000.0, &material_ground})
 
-	material_left := Material{albedo = {0,0,1}, type = .Dielectric, refraction_index = 1.5}
-	material_bubble := Material{albedo = {1,0,0}, type = .Dielectric, refraction_index = 1 / 1.5}
+	for a := -11; a < 11 ; a+=1 {
+		for b := -11; b < 11; b+=1 {
+			choose_mat := random_double()
+            center := v3{f32(a) + 0.9*random_double(), 0.2, f32(b) + 0.9*random_double()}
+			
+            if (linalg.length(center - point3{4, 0.2, 0}) > 0.9) {
+                sphere_material : ^Material = new(Material)
+			
+                if (choose_mat < 0.8) {
+                    // diffuse
+                    albedo : Color = v3_random_range(0, 1) * v3_random_range(0, 1)
+                    sphere_material^ = Material{type = .Lambertian, albedo = albedo}
+                    append(&world, Sphere{center, 0.2, sphere_material})
+                } else if (choose_mat < 0.95) {
+                    // metal
+                    albedo : Color = v3_random_range(0.5, 1)
+                    fuzz := random_double(0, 0.5)
+                    sphere_material^ = Material{type = .Metal, albedo = albedo, fuzz = fuzz}
+                    append(&world, Sphere{center, 0.2, sphere_material})
+                } else {
+                    // glass
+                    sphere_material^ = Material{type = .Dielectric, refraction_index = 1.5}
+                    append(&world, Sphere{center, 0.2, sphere_material})
+                }
+            }
+		}
+	}
 
-	material_right := Material{albedo = {0.8,0.6,0.2}, type = .Metal, fuzz = 1}
-
-	append(&world, Sphere{{ 0.0, -100.5, -1.0}, 100.0, &material_ground})
-	append(&world, Sphere{{ 0.0,    0.0, -1.2},   0.5, &material_center})
-	append(&world, Sphere{{-1.0,    0.0, -1.0},   0.5, &material_left})
-	append(&world, Sphere{{-1.0,    0.0, -1.0},   0.4, &material_bubble})
-	append(&world, Sphere{{ 1.0,    0.0, -1.0},   0.5, &material_right})
-
-	// material_ground := Material{albedo = {0.8, 0.8, 0}, type = .Lambertian}
-	// material_center := Material{albedo = {0.1, 0.2, 0.5}, type = .Lambertian}
-	// material_left := Material{type = .Dielectric, refraction_index = 1.5}
-	// material_bubble := Material{type = .Dielectric, refraction_index = 1.0 / 1.5}
-	// material_right := Material{albedo = {0.8, 0.6, 0.2}, type = .Metal, fuzz = 1.0}
-	// append(&world, Sphere{{0, -100.5, -1}, 100, &material_ground})
-	// append(&world, Sphere{{0, 0, -1.2}, 0.5, &material_center})
-	// append(&world, Sphere{{-1, 0, -1.0}, 0.5, &material_left})
-	// append(&world, Sphere{{-1, 0, -1.0}, 0.4, &material_bubble})
-	// append(&world, Sphere{{1, 0, -1.0}, 0.5, &material_right})
-
+	material1 := Material{type = .Dielectric, refraction_index = 1.5}
+	append(&world, Sphere{{0,1,0}, 1, &material1})
+	
+	material2 := Material{type = .Lambertian, albedo = {0.4,0.2,0.1}}
+	append(&world, Sphere{{-4,1,0}, 1, &material2})
+	
+	material3 := Material{type = .Metal, albedo = {0.7, 0.6, 0.5}, fuzz = 0}
+	append(&world, Sphere{{4,1,0}, 1, &material3})
+	
 	cam := camera_init()
 	camera_render(&cam, world[:])
 }
@@ -191,8 +206,6 @@ interval_empty := Interval{+INFINITY, -INFINITY}
 @rodata
 interval_universe := Interval{-INFINITY, +INFINITY}
 
-
-
 Camera :: struct {
 
 	// Public
@@ -227,17 +240,22 @@ camera_init :: proc() -> (cam: Camera) {
 	// Setting public fields
 
 	aspect_ratio :: 16.0 / 9.0
-	cam.image_width = 400
-	cam.samples_per_pixel = 50
-	cam.max_depth = 10
+
+	// Frame quality settings
+	cam.image_width = 1200
+	cam.samples_per_pixel = 300
+	cam.max_depth = 20
+
+	// Camera Parameters
+	
 	cam.vfov = 20
 
-	cam.lookfrom = {-2,2,1}
-	cam.lookat = {0,0,-1}
+	cam.lookfrom = {13,2,3}
+	cam.lookat = {0,0,0}
 	cam.vup = {0,1,0}
 
-	cam.defocus_angle = 10
-	cam.focus_dist = 3.4
+	cam.defocus_angle = 0.6
+	cam.focus_dist = 10
 
 	// /end
 
