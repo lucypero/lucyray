@@ -23,8 +23,6 @@ mag :: linalg.vector_length
 main :: proc() {
 	world := make([dynamic]Hittable, 0, 20)
 
-
-
 	material_ground := Material{albedo = {0.8,0.8,0}, type = .Lambertian}
 	material_center := Material{albedo = {0.1,0.2,0.5}, type = .Lambertian}
 
@@ -207,6 +205,9 @@ Camera :: struct {
 	lookfrom : point3,   // Point camera is looking from
 	lookat   :point3,  // Point camera is looking at
 	vup      :v3,     // Camera-relative "up" direction
+	
+	defocus_angle :f32,  // Variation angle of rays through each pixel
+    focus_dist :f32,    // Distance from camera lookfrom point to plane of perfect focus
 
 	// Private
 	pixel_samples_scale: f32, // Color scale factor for a sum of pixel samples
@@ -216,7 +217,9 @@ Camera :: struct {
 	center: point3,
 	pixel_delta_u : v3,
 	pixel_delta_v : v3,
-	u,v,w: v3
+	u,v,w: v3,
+
+	defocus_disk_u, defocus_disk_v: v3 // Defocus disk horizontal / vertical radius
 }
 
 camera_init :: proc() -> (cam: Camera) {
@@ -233,6 +236,9 @@ camera_init :: proc() -> (cam: Camera) {
 	cam.lookat = {0,0,-1}
 	cam.vup = {0,1,0}
 
+	cam.defocus_angle = 10
+	cam.focus_dist = 3.4
+
 	// /end
 
 	cam.center = cam.lookfrom
@@ -243,11 +249,9 @@ camera_init :: proc() -> (cam: Camera) {
 	cam.image_height = max(1, cast(int)(cast(f32)cam.image_width / aspect_ratio))
 
 	// Determine viewport dimensions.
-	focal_length := linalg.length(cam.lookfrom - cam.lookat)
 	theta := degrees_to_radians(cam.vfov)
 	h := linalg.tan(theta/2)
-	viewport_height := 2 * h * focal_length
-
+	viewport_height := 2 * h * cam.focus_dist;
 	viewport_width : f32 = viewport_height * (cast(f32)cam.image_width / cast(f32)cam.image_height)
 
 	// Calculate the u,v,w unit basis vectors for the camera coordinate frame.
@@ -264,10 +268,21 @@ camera_init :: proc() -> (cam: Camera) {
 	cam.pixel_delta_v = viewport_v / cast(f32)cam.image_height;
 
 	// Calculate the location of the upper left pixel.
-	viewport_upper_left : point3 = cam.center - (focal_length * cam.w) - viewport_u / 2 - viewport_v / 2
+	viewport_upper_left : point3 = cam.center - (cam.focus_dist * cam.w) - viewport_u / 2 - viewport_v / 2
 	cam.pixel00_loc = viewport_upper_left + 0.5 * (cam.pixel_delta_u + cam.pixel_delta_v)
 
+	// Calculate the camera defocus disk basis vectors.
+	defocus_radius := cam.focus_dist * linalg.tan(degrees_to_radians(cam.defocus_angle / 2));
+    cam.defocus_disk_u = cam.u * defocus_radius;
+    cam.defocus_disk_v = cam.v * defocus_radius;
+    
 	return cam
+}
+
+camera_defocus_disk_sample :: proc(cam: Camera) -> v3{
+    // Returns a random point in the camera defocus disk.
+    p := random_in_unit_disk()
+    return cam.center + (p[0] * cam.defocus_disk_u) + (p[1] * cam.defocus_disk_v)
 }
 
 camera_render :: proc(cam: ^Camera, world: []Hittable) {
@@ -336,7 +351,7 @@ camera_get_ray :: proc(cam: Camera, i, j: int) -> Ray {
 	((f32(i) + offset.x) * cam.pixel_delta_u) +
 	((f32(j) + offset.y) * cam.pixel_delta_v)
 
-	ray_origin := cam.center
+	ray_origin := (cam.defocus_angle <= 0) ? cam.center : camera_defocus_disk_sample(cam)
 	ray_direction := pixel_sample - ray_origin
 
 	return Ray{ray_origin, ray_direction}
@@ -358,6 +373,15 @@ random_double_minmax :: proc(min, max: f32) -> f32 {
 }
 
 random_double :: proc{random_double_norm, random_double_minmax}
+
+random_in_unit_disk :: proc() -> v3 {
+	for {
+        p := v3{random_double(-1,1), random_double(-1,1), 0}
+        if (linalg.length2(p) < 1) {
+         	return p
+        }
+    }
+}
 
 v3_random_one :: proc () -> v3 {
 	return v3{random_double(), random_double(), random_double()}
