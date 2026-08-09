@@ -24,52 +24,56 @@ main :: proc() {
 	world := make([dynamic]Hittable, 0, 20)
 
 	material_ground := Material{albedo = {0.5,0.5,0.5}, type = .Lambertian}
-	append(&world, Sphere{{ 0.0, -1000, 0}, 1000.0, &material_ground})
+	append(&world, sphere_new_still({ 0.0, -1000, 0}, 1000.0, &material_ground))
 
 	for a := -11; a < 11 ; a+=1 {
 		for b := -11; b < 11; b+=1 {
 			choose_mat := random_double()
-            center := v3{f32(a) + 0.9*random_double(), 0.2, f32(b) + 0.9*random_double()}
-			
-            if (linalg.length(center - point3{4, 0.2, 0}) > 0.9) {
-                sphere_material : ^Material = new(Material)
-			
-                if (choose_mat < 0.8) {
-                    // diffuse
-                    albedo : Color = v3_random_range(0, 1) * v3_random_range(0, 1)
-                    sphere_material^ = Material{type = .Lambertian, albedo = albedo}
-                    append(&world, Sphere{center, 0.2, sphere_material})
-                } else if (choose_mat < 0.95) {
-                    // metal
-                    albedo : Color = v3_random_range(0.5, 1)
-                    fuzz := random_double(0, 0.5)
-                    sphere_material^ = Material{type = .Metal, albedo = albedo, fuzz = fuzz}
-                    append(&world, Sphere{center, 0.2, sphere_material})
-                } else {
-                    // glass
-                    sphere_material^ = Material{type = .Dielectric, refraction_index = 1.5}
-                    append(&world, Sphere{center, 0.2, sphere_material})
-                }
-            }
+			center := v3{f32(a) + 0.9*random_double(), 0.2, f32(b) + 0.9*random_double()}
+
+			if (linalg.length(center - point3{4, 0.2, 0}) > 0.9) {
+				sphere_material : ^Material = new(Material)
+
+				if (choose_mat < 0.8) {
+					// diffuse
+					albedo : Color = v3_random_range(0, 1) * v3_random_range(0, 1)
+					sphere_material^ = Material{type = .Lambertian, albedo = albedo}
+					center2 := center + v3{0, random_double(0,.5), 0}
+					append(&world, Sphere{Ray{orig = center, dir = center2 - center}, 0.2, sphere_material})
+				} else if (choose_mat < 0.95) {
+					// metal
+					albedo : Color = v3_random_range(0.5, 1)
+					fuzz := random_double(0, 0.5)
+					sphere_material^ = Material{type = .Metal, albedo = albedo, fuzz = fuzz}
+					center2 := center + v3{0, random_double(0,.5), 0}
+					append(&world, Sphere{Ray{orig = center, dir = center2 - center}, 0.2, sphere_material})
+				} else {
+					// glass
+					sphere_material^ = Material{type = .Dielectric, refraction_index = 1.5}
+					center2 := center + v3{0, random_double(0,.5), 0}
+					append(&world, Sphere{Ray{orig = center, dir = center2 - center}, 0.2, sphere_material})
+				}
+			}
 		}
 	}
 
 	material1 := Material{type = .Dielectric, refraction_index = 1.5}
-	append(&world, Sphere{{0,1,0}, 1, &material1})
-	
+	append(&world, sphere_new_still({0,1,0}, 1, &material1))
+
 	material2 := Material{type = .Lambertian, albedo = {0.4,0.2,0.1}}
-	append(&world, Sphere{{-4,1,0}, 1, &material2})
-	
+	append(&world, sphere_new_still({-4,1,0}, 1, &material2))
+
 	material3 := Material{type = .Metal, albedo = {0.7, 0.6, 0.5}, fuzz = 0}
-	append(&world, Sphere{{4,1,0}, 1, &material3})
-	
+	append(&world, sphere_new_still({4,1,0}, 1, &material3))
+
 	cam := camera_init()
 	camera_render(&cam, world[:])
 }
 
 Ray :: struct {
 	orig: point3,
-	dir: v3
+	dir: v3,
+	tm:f32
 }
 
 ray_at :: proc(r: Ray, t: f32) -> point3 {
@@ -113,16 +117,23 @@ Hittable :: union {
 }
 
 Sphere :: struct {
-	center: point3,
+	center: Ray,
 	radius: f32,
-	mat: ^Material, // TODO: remember to initialize this
+	mat: ^Material,
+}
+
+// inits a sphere that is standing still
+sphere_new_still :: proc(orig: v3, rad: f32, mat: ^Material) -> Sphere {
+	return Sphere{center = Ray{orig = orig}, radius = rad, mat = mat}
 }
 
 hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
 	switch inner in hittable {
 	case Sphere:
 		sphere := inner
-		oc := sphere.center - r.orig
+
+		current_center := ray_at(sphere.center, r.tm)
+		oc := current_center - r.orig
 
 		a := linalg.length2(r.dir)
 		h := linalg.dot(r.dir, oc)
@@ -146,7 +157,7 @@ hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord)
 		rec.t = root
 		rec.p = ray_at(r, rec.t)
 		rec.mat = sphere.mat
-		outward_normal := (rec.p - sphere.center) / sphere.radius;
+		outward_normal := (rec.p - current_center) / sphere.radius;
 		hr_set_face_normal(&rec, r, outward_normal);
 
 		return true, rec
@@ -218,9 +229,9 @@ Camera :: struct {
 	lookfrom : point3,   // Point camera is looking from
 	lookat   :point3,  // Point camera is looking at
 	vup      :v3,     // Camera-relative "up" direction
-	
+
 	defocus_angle :f32,  // Variation angle of rays through each pixel
-    focus_dist :f32,    // Distance from camera lookfrom point to plane of perfect focus
+	focus_dist :f32,    // Distance from camera lookfrom point to plane of perfect focus
 
 	// Private
 	pixel_samples_scale: f32, // Color scale factor for a sum of pixel samples
@@ -242,12 +253,12 @@ camera_init :: proc() -> (cam: Camera) {
 	aspect_ratio :: 16.0 / 9.0
 
 	// Frame quality settings
-	cam.image_width = 1200
-	cam.samples_per_pixel = 300
+	cam.image_width = 400
+	cam.samples_per_pixel = 100
 	cam.max_depth = 20
 
 	// Camera Parameters
-	
+
 	cam.vfov = 20
 
 	cam.lookfrom = {13,2,3}
@@ -291,16 +302,16 @@ camera_init :: proc() -> (cam: Camera) {
 
 	// Calculate the camera defocus disk basis vectors.
 	defocus_radius := cam.focus_dist * linalg.tan(degrees_to_radians(cam.defocus_angle / 2));
-    cam.defocus_disk_u = cam.u * defocus_radius;
-    cam.defocus_disk_v = cam.v * defocus_radius;
-    
+	cam.defocus_disk_u = cam.u * defocus_radius;
+	cam.defocus_disk_v = cam.v * defocus_radius;
+
 	return cam
 }
 
 camera_defocus_disk_sample :: proc(cam: Camera) -> v3{
-    // Returns a random point in the camera defocus disk.
-    p := random_in_unit_disk()
-    return cam.center + (p[0] * cam.defocus_disk_u) + (p[1] * cam.defocus_disk_v)
+	// Returns a random point in the camera defocus disk.
+	p := random_in_unit_disk()
+	return cam.center + (p[0] * cam.defocus_disk_u) + (p[1] * cam.defocus_disk_v)
 }
 
 camera_render :: proc(cam: ^Camera, world: []Hittable) {
@@ -371,8 +382,9 @@ camera_get_ray :: proc(cam: Camera, i, j: int) -> Ray {
 
 	ray_origin := (cam.defocus_angle <= 0) ? cam.center : camera_defocus_disk_sample(cam)
 	ray_direction := pixel_sample - ray_origin
+	ray_time := random_double()
 
-	return Ray{ray_origin, ray_direction}
+	return Ray{ray_origin, ray_direction, ray_time}
 }
 
 // Returns the vector to a random point in the [-.5,-.5]-[+.5,+.5] unit square.
@@ -394,11 +406,11 @@ random_double :: proc{random_double_norm, random_double_minmax}
 
 random_in_unit_disk :: proc() -> v3 {
 	for {
-        p := v3{random_double(-1,1), random_double(-1,1), 0}
-        if (linalg.length2(p) < 1) {
-         	return p
-        }
-    }
+		p := v3{random_double(-1,1), random_double(-1,1), 0}
+		if (linalg.length2(p) < 1) {
+			return p
+		}
+	}
 }
 
 v3_random_one :: proc () -> v3 {
@@ -476,13 +488,13 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 			scatter_direction = rec.normal
 		}
 
-		scattered = Ray{rec.p, scatter_direction}
+		scattered = Ray{rec.p, scatter_direction, ray_in.tm}
 		attenuation = mat.albedo
 		return
 	case .Metal:
 		reflected := v3_reflect(ray_in.dir, rec.normal)
 		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
-		scattered = Ray{rec.p, reflected}
+		scattered = Ray{rec.p, reflected, ray_in.tm}
 		attenuation = mat.albedo
 		did_scatter = linalg.dot(scattered.dir, rec.normal) > 0
 		return
@@ -504,7 +516,7 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 			direction = v3_refract(unit_direction, rec.normal, ri)
 		}
 
-		scattered = Ray{rec.p, direction}
+		scattered = Ray{rec.p, direction, ray_in.tm}
 	}
 
 	return
