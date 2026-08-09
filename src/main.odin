@@ -39,19 +39,19 @@ main :: proc() {
 					albedo : Color = v3_random_range(0, 1) * v3_random_range(0, 1)
 					sphere_material^ = Material{type = .Lambertian, albedo = albedo}
 					center2 := center + v3{0, random_double(0,.5), 0}
-					append(&world, Sphere{Ray{orig = center, dir = center2 - center}, 0.2, sphere_material})
+					append(&world, sphere_new_moving(Ray{orig = center, dir = center2 - center}, 0.2, sphere_material))
 				} else if (choose_mat < 0.95) {
 					// metal
 					albedo : Color = v3_random_range(0.5, 1)
 					fuzz := random_double(0, 0.5)
 					sphere_material^ = Material{type = .Metal, albedo = albedo, fuzz = fuzz}
 					center2 := center + v3{0, random_double(0,.5), 0}
-					append(&world, Sphere{Ray{orig = center, dir = center2 - center}, 0.2, sphere_material})
+					append(&world, sphere_new_moving(Ray{orig = center, dir = center2 - center}, 0.2, sphere_material))
 				} else {
 					// glass
 					sphere_material^ = Material{type = .Dielectric, refraction_index = 1.5}
 					center2 := center + v3{0, random_double(0,.5), 0}
-					append(&world, Sphere{Ray{orig = center, dir = center2 - center}, 0.2, sphere_material})
+					append(&world, sphere_new_moving(Ray{orig = center, dir = center2 - center}, 0.2, sphere_material))
 				}
 			}
 		}
@@ -114,20 +114,28 @@ hr_set_face_normal :: proc(hr: ^HitRecord, r: Ray, outward_normal: v3) {
 
 Hittable :: union {
 	Sphere,
+	AABB,
 }
 
 Sphere :: struct {
 	center: Ray,
 	radius: f32,
 	mat: ^Material,
+	bbox: AABB // TODO remember to init this
 }
 
-// inits a sphere that is standing still
-sphere_new_still :: proc(orig: v3, rad: f32, mat: ^Material) -> Sphere {
-	return Sphere{center = Ray{orig = orig}, radius = rad, mat = mat}
+hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
+	switch inner in hittable {
+	case Sphere:
+		return inner.bbox
+	case AABB:
+		return inner
+	case:
+		panic("cannot reach here")
+	}
 }
 
-hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
+hittable_hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
 	switch inner in hittable {
 	case Sphere:
 		sphere := inner
@@ -161,10 +169,63 @@ hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord)
 		hr_set_face_normal(&rec, r, outward_normal);
 
 		return true, rec
+	case AABB:
+
+		aabb := inner
+
+		for axis in 0..<3 {
+
+			ax: Interval
+			switch axis {
+			case 0: ax = aabb.x
+			case 1: ax = aabb.y
+			case: ax = aabb.z
+			}
+
+			adinv := 1.0 / r.dir[axis]
+
+			t0 := (ax.min - r.orig[axis]) * adinv;
+			t1 := (ax.max - r.orig[axis]) * adinv;
+
+			ray_t := interval
+
+			if t0 < t1 {
+				if t0 > ray_t.min do ray_t.min = t0
+				if t1 < ray_t.max do ray_t.max = t1
+			} else {
+				if t1 > ray_t.min do ray_t.min = t1
+				if t0 < ray_t.max do ray_t.max = t0
+			}
+
+			if (ray_t.max <= ray_t.min) {
+				return false, HitRecord{}
+			}
+		}
+
+		return true, HitRecord{}
+
 	case:
 		panic("unsupported shape")
 		// return false, {}
 	}
+}
+
+
+// inits a sphere that is standing still
+sphere_new_still :: proc(orig: v3, rad: f32, mat: ^Material) -> Sphere {
+	// calculating bbox
+	rvec := v3{rad, rad, rad}
+	bbox := aabb_new(orig - rvec, orig + rvec)
+	return Sphere{Ray{orig = orig}, rad, mat, bbox}
+}
+
+sphere_new_moving :: proc(center: Ray, rad: f32, mat: ^Material) -> Sphere {
+	// calculating bbox
+	rvec := v3{rad, rad, rad}
+	box1 := aabb_new(ray_at(center, 0) - rvec, ray_at(center, 0) + rvec)
+	box2 := aabb_new(ray_at(center, 1) - rvec, ray_at(center, 1) + rvec)
+	bbox := aabb_union(box1, box2)
+	return Sphere{center, rad, mat, bbox}
 }
 
 hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
@@ -173,7 +234,7 @@ hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, Hi
 	closest_so_far := interval.max
 
 	for hittable in hittables {
-		did_hit, rec := hit(hittable, r, {interval.min, closest_so_far})
+		did_hit, rec := hittable_hit(hittable, r, {interval.min, closest_so_far})
 		if did_hit {
 			hit_anything = true
 			closest_so_far = rec.t
@@ -195,8 +256,9 @@ Interval :: struct {
 	min, max: f32
 }
 
-interval_new :: proc() -> Interval {
-	return {+INFINITY, -INFINITY}
+interval_expand :: proc(int: Interval, delta: f32) -> Interval {
+	padding := delta / 2
+	return Interval{int.min - padding, int.max + padding}
 }
 
 interval_contains :: proc(i: Interval, x: f32) -> bool {
@@ -209,6 +271,14 @@ interval_surrounds :: proc(i: Interval, x: f32) -> bool {
 
 interval_clamp :: proc(i: Interval, x: f32) -> f32 {
 	return clamp(x, i.min, i.max)
+}
+
+// Create the interval tightly enclosing the two input intervals.
+interval_union :: proc(a, b: Interval) -> Interval {
+	return Interval {
+		a.min <= b.min ? a.min : b.min,
+		a.max >= b.max ? a.max : b.max
+	}
 }
 
 @rodata
@@ -520,4 +590,37 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 	}
 
 	return
+}
+
+
+AABB :: struct {
+	x, y, z: Interval
+}
+
+aabb_new_empty :: proc() -> AABB {
+
+	return AABB {
+		x = interval_empty,
+		y = interval_empty,
+		z = interval_empty,
+	}
+}
+
+// Treat the two points a and b as extrema for the bounding box, so we don't require a
+// particular minimum/maximum coordinate order.
+aabb_new :: proc(a, b: point3) -> AABB {
+	return AABB {
+		x = (a[0] <= b[0]) ? Interval{a[0], b[0]} : Interval{b[0], a[0]},
+		y = (a[1] <= b[1]) ? Interval{a[1], b[1]} : Interval{b[1], a[1]},
+		z = (a[2] <= b[2]) ? Interval{a[2], b[2]} : Interval{b[2], a[2]},
+	}
+}
+
+// constructs a AABB that encloses two input AABBs
+aabb_union :: proc(box0, box1: AABB) -> AABB {
+	return AABB {
+		x = interval_union(box0.x, box1.x),
+		y = interval_union(box0.y, box1.y),
+		z = interval_union(box0.z, box1.z)
+	}
 }
