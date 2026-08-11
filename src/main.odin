@@ -1,11 +1,13 @@
 package main
 
+import "core:slice"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:math/linalg"
 import "core:math"
 import "core:math/rand"
+import "core:time"
 
 // constants
 
@@ -21,6 +23,8 @@ Color :: v3
 mag :: linalg.vector_length
 
 main :: proc() {
+	time_start := time.now()
+
 	world := make([dynamic]Hittable, 0, 20)
 
 	material_ground := Material{albedo = {0.5,0.5,0.5}, type = .Lambertian}
@@ -66,8 +70,16 @@ main :: proc() {
 	material3 := Material{type = .Metal, albedo = {0.7, 0.6, 0.5}, fuzz = 0}
 	append(&world, sphere_new_still({4,1,0}, 1, &material3))
 
+	world_opt := new(Hittable)
+	world_opt^ = BVH_Node{}
+	bvh_node_new(world[:], &world_opt.(BVH_Node))
+
 	cam := camera_init()
-	camera_render(&cam, world[:])
+
+	camera_render(&cam, world_opt^)
+	time_after := time.now()
+
+	fmt.printfln("Took %v", time.diff(time_start, time_after))
 }
 
 Ray :: struct {
@@ -115,6 +127,7 @@ hr_set_face_normal :: proc(hr: ^HitRecord, r: Ray, outward_normal: v3) {
 Hittable :: union {
 	Sphere,
 	AABB,
+	BVH_Node
 }
 
 Sphere :: struct {
@@ -130,6 +143,8 @@ hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 		return inner.bbox
 	case AABB:
 		return inner
+	case BVH_Node:
+		return inner.bbox
 	case:
 		panic("cannot reach here")
 	}
@@ -170,40 +185,9 @@ hittable_hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, H
 
 		return true, rec
 	case AABB:
-
-		aabb := inner
-
-		for axis in 0..<3 {
-
-			ax: Interval
-			switch axis {
-			case 0: ax = aabb.x
-			case 1: ax = aabb.y
-			case: ax = aabb.z
-			}
-
-			adinv := 1.0 / r.dir[axis]
-
-			t0 := (ax.min - r.orig[axis]) * adinv;
-			t1 := (ax.max - r.orig[axis]) * adinv;
-
-			ray_t := interval
-
-			if t0 < t1 {
-				if t0 > ray_t.min do ray_t.min = t0
-				if t1 < ray_t.max do ray_t.max = t1
-			} else {
-				if t1 > ray_t.min do ray_t.min = t1
-				if t0 < ray_t.max do ray_t.max = t0
-			}
-
-			if (ray_t.max <= ray_t.min) {
-				return false, HitRecord{}
-			}
-		}
-
-		return true, HitRecord{}
-
+		return aabb_hit(inner, r, interval)
+	case BVH_Node:
+		return bvh_node_hit(inner, r, interval)
 	case:
 		panic("unsupported shape")
 		// return false, {}
@@ -323,9 +307,9 @@ camera_init :: proc() -> (cam: Camera) {
 	aspect_ratio :: 16.0 / 9.0
 
 	// Frame quality settings
-	cam.image_width = 400
-	cam.samples_per_pixel = 100
-	cam.max_depth = 20
+	cam.image_width = 200
+	cam.samples_per_pixel = 15
+	cam.max_depth = 10
 
 	// Camera Parameters
 
@@ -384,7 +368,7 @@ camera_defocus_disk_sample :: proc(cam: Camera) -> v3{
 	return cam.center + (p[0] * cam.defocus_disk_u) + (p[1] * cam.defocus_disk_v)
 }
 
-camera_render :: proc(cam: ^Camera, world: []Hittable) {
+camera_render :: proc(cam: ^Camera, world: Hittable) {
 
 	fmt.sbprintf(&cam.sb, "P3\n%v %v\n255\n", cam.image_width, cam.image_height)
 
@@ -414,13 +398,14 @@ camera_render :: proc(cam: ^Camera, world: []Hittable) {
 	strings.builder_reset(&cam.sb)
 }
 
-camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: []Hittable) -> Color {
+camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: Hittable) -> Color {
 
 	// If we've exceeded the ray bounce limit, no more light is gathered.
 	if depth <= 0 do return Color{0,0,0}
 
 	// passing a limig min w a small number to avoid shadow acne
-	hit, rec := hit_list(world, r, {0.001, INFINITY})
+	hit, rec := hittable_hit(world, r, {0.001, INFINITY})
+
 	if hit {
 		attenuation, scatter, did_scatter := material_scatter(rec.mat^, r, rec)
 		if did_scatter {
@@ -473,6 +458,10 @@ random_double_minmax :: proc(min, max: f32) -> f32 {
 }
 
 random_double :: proc{random_double_norm, random_double_minmax}
+
+random_int :: proc(min, max: int) -> int {
+	return rand.int_range(min, max)
+}
 
 random_in_unit_disk :: proc() -> v3 {
 	for {
@@ -623,4 +612,129 @@ aabb_union :: proc(box0, box1: AABB) -> AABB {
 		y = interval_union(box0.y, box1.y),
 		z = interval_union(box0.z, box1.z)
 	}
+}
+
+aabb_get_axis_interval :: proc(aabb: AABB, axis_index: int) -> Interval {
+	switch axis_index {
+	case 0: return aabb.x
+	case 1: return aabb.y
+	case: return aabb.z
+	}
+}
+
+aabb_hit :: proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, HitRecord) {
+
+	for axis in 0..<3 {
+
+		ax := aabb_get_axis_interval(aabb, axis)
+
+		adinv := 1.0 / r.dir[axis]
+
+		t0 := (ax.min - r.orig[axis]) * adinv;
+		t1 := (ax.max - r.orig[axis]) * adinv;
+
+		ray_t := ray_t
+
+		if t0 < t1 {
+			if t0 > ray_t.min do ray_t.min = t0
+			if t1 < ray_t.max do ray_t.max = t1
+		} else {
+			if t1 > ray_t.min do ray_t.min = t1
+			if t0 < ray_t.max do ray_t.max = t0
+		}
+
+		if (ray_t.max <= ray_t.min) {
+			return false, HitRecord{}
+		}
+	}
+
+	return true, HitRecord{}
+}
+
+// TODO: do i need to make this a Hittable?
+
+// TODO: refactor code so it uses this instead of []Hittable
+HittableList :: struct {
+	objects : [dynamic]Hittable,
+	bbox: AABB,
+}
+
+hittable_list_add :: proc(hl : ^HittableList, object: Hittable) {
+	append(&hl.objects, object)
+	hl.bbox = aabb_union(hl.bbox, hittable_get_bounding_box(object))
+}
+
+BVH_Node :: struct {
+	left, right: ^Hittable,
+	bbox: AABB
+}
+
+box_compare :: proc(a, b: Hittable, axis_index: int) -> bool {
+	a_axis_interval := aabb_get_axis_interval(hittable_get_bounding_box(a), axis_index)
+	b_axis_interval := aabb_get_axis_interval(hittable_get_bounding_box(b), axis_index)
+	return a_axis_interval.min < b_axis_interval.min
+}
+
+box_compare_x :: proc(a, b: Hittable) -> bool {
+	return box_compare(a,b, 0)
+}
+
+box_compare_y :: proc(a, b: Hittable) -> bool {
+	return box_compare(a,b, 1)
+}
+
+box_compare_z :: proc(a, b: Hittable) -> bool {
+	return box_compare(a,b, 2)
+}
+
+bvh_node_new :: proc(objects: []Hittable, res: ^BVH_Node) {
+	axis := random_int(0,2);
+
+	comparator := (axis == 0) ? box_compare_x: (axis == 1) ? box_compare_y : box_compare_z
+
+	object_span := len(objects)
+
+	if (object_span == 1) {
+		res.left = &objects[0]
+		res.right = res.left
+	} else if (object_span == 2) {
+		res.left = &objects[0]
+		res.right = &objects[1]
+	} else {
+		slice.sort_by(objects, comparator)
+
+		mid := object_span/2;
+
+		left_bvh := new(Hittable)
+		left_bvh^ = BVH_Node{}
+		bvh_node_new(objects[:mid], &left_bvh.(BVH_Node))
+
+		right_bvh := new(Hittable)
+		right_bvh^ = BVH_Node{}
+		bvh_node_new(objects[mid:], &right_bvh.(BVH_Node))
+
+		res.left = left_bvh
+		res.right = right_bvh
+	}
+
+	res.bbox = aabb_union(hittable_get_bounding_box(res.left^), hittable_get_bounding_box(res.right^));
+}
+
+bvh_node_hit :: proc(bvh_node: BVH_Node, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+	if did_hit, _ := aabb_hit(bvh_node.bbox, r, ray_t); !did_hit {
+		return false, HitRecord{}
+	}
+
+	hit_left, rec := hittable_hit(bvh_node.left^, r, ray_t)
+	hit_right, rec2 := hittable_hit(bvh_node.right^, r, Interval{ray_t.min, hit_left ? rec.t : ray_t.max})
+
+	if hit_right {
+		return true, rec2
+	}
+
+	if hit_left {
+		return true, rec
+	}
+
+	return false, HitRecord{}
 }
