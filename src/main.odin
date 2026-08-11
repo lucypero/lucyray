@@ -6,6 +6,7 @@ import "core:strings"
 import "core:math/linalg"
 import "core:math"
 import "core:math/rand"
+import "core:time"
 
 // constants
 
@@ -21,6 +22,7 @@ Color :: v3
 mag :: linalg.vector_length
 
 main :: proc() {
+	time_start := time.now()
 	world := make([dynamic]Hittable, 0, 20)
 
 	material_ground := Material{albedo = {0.5,0.5,0.5}, type = .Lambertian}
@@ -68,6 +70,9 @@ main :: proc() {
 
 	cam := camera_init()
 	camera_render(&cam, world[:])
+
+	time_after := time.now()
+	fmt.printfln("Before bvh, took: %v", time.diff(time_start, time_after))
 }
 
 Ray :: struct {
@@ -253,9 +258,9 @@ camera_init :: proc() -> (cam: Camera) {
 	aspect_ratio :: 16.0 / 9.0
 
 	// Frame quality settings
-	cam.image_width = 400
-	cam.samples_per_pixel = 100
-	cam.max_depth = 20
+	cam.image_width = 200
+	cam.samples_per_pixel = 15
+	cam.max_depth = 10
 
 	// Camera Parameters
 
