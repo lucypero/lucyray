@@ -622,7 +622,9 @@ aabb_get_axis_interval :: proc(aabb: AABB, axis_index: int) -> Interval {
 	}
 }
 
-aabb_hit :: proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, HitRecord) {
+aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, HitRecord) {
+
+	ray_t := ray_t
 
 	for axis in 0..<3 {
 
@@ -632,8 +634,6 @@ aabb_hit :: proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, HitRecord) {
 
 		t0 := (ax.min - r.orig[axis]) * adinv;
 		t1 := (ax.max - r.orig[axis]) * adinv;
-
-		ray_t := ray_t
 
 		if t0 < t1 {
 			if t0 > ray_t.min do ray_t.min = t0
@@ -651,9 +651,6 @@ aabb_hit :: proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, HitRecord) {
 	return true, HitRecord{}
 }
 
-// TODO: do i need to make this a Hittable?
-
-// TODO: refactor code so it uses this instead of []Hittable
 HittableList :: struct {
 	objects : [dynamic]Hittable,
 	bbox: AABB,
