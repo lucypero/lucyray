@@ -244,6 +244,10 @@ Interval :: struct {
 	min, max: f32
 }
 
+interval_size :: proc(i : Interval) -> f32 {
+	return abs(i.max - i.min)
+}
+
 interval_expand :: proc(int: Interval, delta: f32) -> Interval {
 	padding := delta / 2
 	return Interval{int.min - padding, int.max + padding}
@@ -609,6 +613,20 @@ aabb_new :: proc(a, b: point3) -> AABB {
 	}
 }
 
+// Returns the index of the longest axis of the bounding box.
+aabb_longest_axis :: proc(aabb: AABB) -> int {
+	x_s := interval_size(aabb.x)
+	y_s := interval_size(aabb.y)
+	z_s := interval_size(aabb.z)
+	
+	if x_s > y_s {
+		return x_s > z_s ? 0 : 2;
+	}
+    else {
+       return y_s > z_s ? 1 : 2;
+    }
+}
+
 // constructs a AABB that encloses two input AABBs
 aabb_union :: proc(box0, box1: AABB) -> AABB {
 	return AABB {
@@ -695,8 +713,15 @@ bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittabl
 	ensure(err == .None)
 	
 	res := &res_hittable.(BVH_Node)
+
+	// Build the bounding box of the span of source objects.
+    res.bbox = aabb_new_empty()
+
+    for obj in objects {
+    	res.bbox = aabb_union(res.bbox, hittable_get_bounding_box(obj))
+    }
 	
-	axis := random_int(0,2);
+	axis := aabb_longest_axis(res.bbox)
 
 	comparator := (axis == 0) ? box_compare_x: (axis == 1) ? box_compare_y : box_compare_z
 
@@ -717,7 +742,6 @@ bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittabl
 		res.right = bvh_node_new(objects[mid:], allocator)
 	}
 
-	res.bbox = aabb_union(hittable_get_bounding_box(res.left^), hittable_get_bounding_box(res.right^));
 	return
 }
 
