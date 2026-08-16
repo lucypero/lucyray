@@ -2,6 +2,8 @@ package main
 
 import "core:slice"
 import "core:fmt"
+// import "core:mem"
+import mv "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "core:math/linalg"
@@ -25,7 +27,9 @@ mag :: linalg.vector_length
 main :: proc() {
 	time_start := time.now()
 
-	world := make([dynamic]Hittable, 0, 20)
+	bvh_arena := arena_new()
+
+	world := make([dynamic]Hittable, 0, 20, allocator = context.temp_allocator)
 
 	material_ground := Material{albedo = {0.5,0.5,0.5}, type = .Lambertian}
 	append(&world, sphere_new_still({ 0.0, -1000, 0}, 1000.0, &material_ground))
@@ -36,7 +40,8 @@ main :: proc() {
 			center := v3{f32(a) + 0.9*random_double(), 0.2, f32(b) + 0.9*random_double()}
 
 			if (linalg.length(center - point3{4, 0.2, 0}) > 0.9) {
-				sphere_material : ^Material = new(Material)
+				sphere_material, m_err  := mv.new(&bvh_arena, Material)
+				ensure(m_err == .None)
 
 				if (choose_mat < 0.8) {
 					// diffuse
@@ -70,9 +75,8 @@ main :: proc() {
 	material3 := Material{type = .Metal, albedo = {0.7, 0.6, 0.5}, fuzz = 0}
 	append(&world, sphere_new_still({4,1,0}, 1, &material3))
 
-	world_opt := new(Hittable)
-	world_opt^ = BVH_Node{}
-	bvh_node_new(world[:], &world_opt.(BVH_Node))
+	world_opt := bvh_node_new(world[:], &bvh_arena)
+	free_all(context.temp_allocator)
 
 	cam := camera_init()
 
@@ -684,37 +688,37 @@ box_compare_z :: proc(a, b: Hittable) -> bool {
 	return box_compare(a,b, 2)
 }
 
-bvh_node_new :: proc(objects: []Hittable, res: ^BVH_Node) {
+bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittable: ^Hittable) {
+	
+	err : mv.Allocator_Error
+	res_hittable, err = mv.new_clone(allocator, Hittable(BVH_Node{}))
+	ensure(err == .None)
+	
+	res := &res_hittable.(BVH_Node)
+	
 	axis := random_int(0,2);
 
 	comparator := (axis == 0) ? box_compare_x: (axis == 1) ? box_compare_y : box_compare_z
 
 	object_span := len(objects)
 
+	mem_err : mv.Allocator_Error
+
 	if (object_span == 1) {
-		res.left = &objects[0]
+		res.left, mem_err = mv.new_clone(allocator, objects[0])
 		res.right = res.left
 	} else if (object_span == 2) {
-		res.left = &objects[0]
-		res.right = &objects[1]
+		res.left, mem_err = mv.new_clone(allocator, objects[0])
+		res.right, mem_err  = mv.new_clone(allocator, objects[1])
 	} else {
 		slice.sort_by(objects, comparator)
-
 		mid := object_span/2;
-
-		left_bvh := new(Hittable)
-		left_bvh^ = BVH_Node{}
-		bvh_node_new(objects[:mid], &left_bvh.(BVH_Node))
-
-		right_bvh := new(Hittable)
-		right_bvh^ = BVH_Node{}
-		bvh_node_new(objects[mid:], &right_bvh.(BVH_Node))
-
-		res.left = left_bvh
-		res.right = right_bvh
+		res.left = bvh_node_new(objects[:mid], allocator)
+		res.right = bvh_node_new(objects[mid:], allocator)
 	}
 
 	res.bbox = aabb_union(hittable_get_bounding_box(res.left^), hittable_get_bounding_box(res.right^));
+	return
 }
 
 bvh_node_hit :: proc(bvh_node: BVH_Node, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
@@ -734,4 +738,11 @@ bvh_node_hit :: proc(bvh_node: BVH_Node, r: Ray, ray_t: Interval) -> (bool, HitR
 	}
 
 	return false, HitRecord{}
+}
+
+arena_new :: proc() -> mv.Arena {
+	arena : mv.Arena
+	arena_err := mv.arena_init_growing(&arena)
+	ensure(arena_err == nil)
+	return arena
 }
