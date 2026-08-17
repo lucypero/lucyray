@@ -13,6 +13,8 @@ import "core:time"
 
 // constants
 
+SCENE_SELECT :: 1
+
 INFINITY :: math.INF_F32
 PI :: math.PI
 
@@ -26,7 +28,52 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	time_start := time.now()
+	switch SCENE_SELECT {
+	case 0:
+		do_scene_bouncing_balls()
+	case 1:
+		do_scene_checkered_balls()
+	}
+	time_after := time.now()
+	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
 
+do_scene_checkered_balls :: proc() {
+
+	world_list := make([dynamic]Hittable)
+
+	tex_white := Texture(TextureSolid{Color{.9,.9,.9}})
+	tex_black := Texture(TextureSolid{Color{.2,.3,.1}})
+	tex_checker := Texture(TextureCheckered{1 / 0.32, &tex_white, &tex_black})
+
+	mat_checkered := Material{type = .Lambertian, texture = &tex_checker}
+
+	append(&world_list, sphere_new_still({0,-10,0}, 10, &mat_checkered))
+	append(&world_list, sphere_new_still({0,10,0}, 10, &mat_checkered))
+
+	cam := camera_init(Camera{
+		// frame quality
+		image_width = 400,
+		samples_per_pixel = 100,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 20,
+
+		lookfrom = {13,2,3},
+		lookat = {0,0,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10,
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
+}
+
+do_scene_bouncing_balls :: proc() {
 	bvh_arena := arena_new()
 
 	world := make([dynamic]Hittable, 0, 20, allocator = context.temp_allocator)
@@ -75,15 +122,28 @@ main :: proc() {
 	material3 := Material{type = .Metal, albedo = {0.7, 0.6, 0.5}, fuzz = 0}
 	append(&world, sphere_new_still({4,1,0}, 1, &material3))
 
+
 	world_opt := bvh_node_new(world[:], &bvh_arena)
 	free_all(context.temp_allocator)
 
-	cam := camera_init()
+	cam := camera_init(Camera{
+		// frame quality
+		image_width = 200,
+		samples_per_pixel = 15,
+		max_depth = 10,
+
+		// camera parameters
+		vfov = 20,
+
+		lookfrom = {13,2,3},
+		lookat = {0,0,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0.6,
+		focus_dist = 10,
+	})
 
 	camera_render(&cam, world_opt^)
-	time_after := time.now()
-
-	fmt.printfln("Took %v", time.diff(time_start, time_after))
 }
 
 Ray :: struct {
@@ -118,6 +178,7 @@ HitRecord :: struct {
 	mat: ^Material,
 	normal: v3,
 	t: f32,
+	u, v: f32,
 	front_face: bool
 }
 
@@ -308,29 +369,11 @@ Camera :: struct {
 	defocus_disk_u, defocus_disk_v: v3 // Defocus disk horizontal / vertical radius
 }
 
-camera_init :: proc() -> (cam: Camera) {
-
-	// Setting public fields
+camera_init :: proc(cam_init: Camera) -> (cam: Camera) {
 
 	aspect_ratio :: 16.0 / 9.0
 
-	// Frame quality settings
-	cam.image_width = 200
-	cam.samples_per_pixel = 15
-	cam.max_depth = 10
-
-	// Camera Parameters
-
-	cam.vfov = 20
-
-	cam.lookfrom = {13,2,3}
-	cam.lookat = {0,0,0}
-	cam.vup = {0,1,0}
-
-	cam.defocus_angle = 0.6
-	cam.focus_dist = 10
-
-	// /end
+	cam = cam_init
 
 	cam.center = cam.lookfrom
 
@@ -528,11 +571,12 @@ Material_Type :: enum {
 }
 
 Material :: struct {
-	albedo: Color,
+	texture: ^Texture,
 	fuzz: f32,
 
 	// Refractive index in vacuum or air, or the ratio of the material's refractive index over
 	// the refractive index of the enclosing media
+	albedo: Color, // Fallback used if texture is nil
 	refraction_index: f32,
 	type: Material_Type,
 }
@@ -556,13 +600,13 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 		}
 
 		scattered = Ray{rec.p, scatter_direction, ray_in.tm}
-		attenuation = mat.albedo
+		attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 		return
 	case .Metal:
 		reflected := v3_reflect(ray_in.dir, rec.normal)
 		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
 		scattered = Ray{rec.p, reflected, ray_in.tm}
-		attenuation = mat.albedo
+		attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 		did_scatter = linalg.dot(scattered.dir, rec.normal) > 0
 		return
 	case .Dielectric:
@@ -618,13 +662,13 @@ aabb_longest_axis :: proc(aabb: AABB) -> int {
 	x_s := interval_size(aabb.x)
 	y_s := interval_size(aabb.y)
 	z_s := interval_size(aabb.z)
-	
+
 	if x_s > y_s {
 		return x_s > z_s ? 0 : 2;
 	}
-    else {
-       return y_s > z_s ? 1 : 2;
-    }
+	else {
+		return y_s > z_s ? 1 : 2;
+	}
 }
 
 // constructs a AABB that encloses two input AABBs
@@ -707,20 +751,20 @@ box_compare_z :: proc(a, b: Hittable) -> bool {
 }
 
 bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittable: ^Hittable) {
-	
+
 	err : mv.Allocator_Error
 	res_hittable, err = mv.new_clone(allocator, Hittable(BVH_Node{}))
 	ensure(err == .None)
-	
+
 	res := &res_hittable.(BVH_Node)
 
 	// Build the bounding box of the span of source objects.
-    res.bbox = aabb_new_empty()
+	res.bbox = aabb_new_empty()
 
-    for obj in objects {
-    	res.bbox = aabb_union(res.bbox, hittable_get_bounding_box(obj))
-    }
-	
+	for obj in objects {
+		res.bbox = aabb_union(res.bbox, hittable_get_bounding_box(obj))
+	}
+
 	axis := aabb_longest_axis(res.bbox)
 
 	comparator := (axis == 0) ? box_compare_x: (axis == 1) ? box_compare_y : box_compare_z
@@ -769,4 +813,36 @@ arena_new :: proc() -> mv.Arena {
 	arena_err := mv.arena_init_growing(&arena)
 	ensure(arena_err == nil)
 	return arena
+}
+
+TextureSolid :: struct {
+	albedo: Color
+}
+
+TextureCheckered :: struct {
+	inv_scale: f32,
+	even: ^Texture,
+	odd: ^Texture
+}
+
+Texture :: union #no_nil {
+	TextureSolid,
+	TextureCheckered
+}
+
+texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
+	switch tex_inner in tex {
+	case TextureSolid:
+		return tex_inner.albedo
+	case TextureCheckered:
+		xInteger := int(math.floor(tex_inner.inv_scale * p.x))
+		yInteger := int(math.floor(tex_inner.inv_scale * p.y))
+		zInteger := int(math.floor(tex_inner.inv_scale * p.z))
+
+		isEven := (xInteger + yInteger + zInteger) % 2 == 0
+
+		return isEven ? texture_get_value(tex_inner.even^, u, v, p) : texture_get_value(tex_inner.odd^, u, v, p)
+	case:
+		panic("wut?")
+	}
 }
