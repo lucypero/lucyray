@@ -1,5 +1,6 @@
 package main
 
+import "core:mem"
 import "core:slice"
 import "core:fmt"
 // import "core:mem"
@@ -10,10 +11,11 @@ import "core:math/linalg"
 import "core:math"
 import "core:math/rand"
 import "core:time"
+import stbi "vendor:stb/image"
 
 // constants
 
-SCENE_SELECT :: 1
+SCENE_SELECT :: 2
 
 INFINITY :: math.INF_F32
 PI :: math.PI
@@ -33,9 +35,41 @@ main :: proc() {
 		do_scene_bouncing_balls()
 	case 1:
 		do_scene_checkered_balls()
+	case 2:
+		do_scene_earth()
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_scene_earth :: proc() {
+	world_list := make([dynamic]Hittable)
+
+	tex_earth := texture_image_new("earthmap.jpg")
+	mat_earth := Material{type = .Lambertian, texture = &tex_earth}
+
+	append(&world_list, sphere_new_still({0,0,0}, 2, &mat_earth))
+
+	cam := camera_init(Camera{
+		// frame quality
+		image_width = 400,
+		samples_per_pixel = 100,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 20,
+
+		lookfrom = {0, 0, 12},
+		lookat = {0,0,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10,
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_checkered_balls :: proc() {
@@ -246,8 +280,10 @@ hittable_hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, H
 		rec.p = ray_at(r, rec.t)
 		rec.mat = sphere.mat
 		outward_normal := (rec.p - current_center) / sphere.radius;
-		hr_set_face_normal(&rec, r, outward_normal);
-
+		hr_set_face_normal(&rec, r, outward_normal)
+		u, v := sphere_get_uv(sphere, outward_normal)
+		rec.u = u
+		rec.v = v
 		return true, rec
 	case AABB:
 		return aabb_hit(inner, r, interval)
@@ -275,6 +311,22 @@ sphere_new_moving :: proc(center: Ray, rad: f32, mat: ^Material) -> Sphere {
 	box2 := aabb_new(ray_at(center, 1) - rvec, ray_at(center, 1) + rvec)
 	bbox := aabb_union(box1, box2)
 	return Sphere{center, rad, mat, bbox}
+}
+
+// p: a given point on the sphere of radius one, centered at the origin.
+// u: returned value [0,1] of angle around the Y axis from X=-1.
+// v: returned value [0,1] of angle from Y=-1 to Y=+1.
+//     <1 0 0> yields <0.50 0.50>       <-1  0  0> yields <0.00 0.50>
+//     <0 1 0> yields <0.50 1.00>       < 0 -1  0> yields <0.50 0.00>
+//     <0 0 1> yields <0.25 0.50>       < 0  0 -1> yields <0.75 0.50>
+sphere_get_uv :: proc(sph: Sphere, p: point3) -> (u, v: f32) {
+	theta := math.acos(-p.y);
+	phi := math.atan2(-p.z, p.x) + PI;
+
+	u = phi / (2*PI)
+	v = theta / PI
+
+	return
 }
 
 hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
@@ -825,12 +877,19 @@ TextureCheckered :: struct {
 	odd: ^Texture
 }
 
+TextureImage :: struct {
+	width, height, nrChannels: i32,
+	data : [^]byte,
+}
+
 Texture :: union #no_nil {
 	TextureSolid,
-	TextureCheckered
+	TextureCheckered,
+	TextureImage,
 }
 
 texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
+
 	switch tex_inner in tex {
 	case TextureSolid:
 		return tex_inner.albedo
@@ -842,7 +901,49 @@ texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
 		isEven := (xInteger + yInteger + zInteger) % 2 == 0
 
 		return isEven ? texture_get_value(tex_inner.even^, u, v, p) : texture_get_value(tex_inner.odd^, u, v, p)
+	case TextureImage:
+		if (tex_inner.height <= 0) do return Color{1,1,1}
+
+		// Clamp input texture coordinates to [0,1] x [1,0]
+		u_c := interval_clamp({0, 1}, u)
+		v_c := 1 - interval_clamp({0, 1}, v)
+
+		i := int(u_c * cast(f32)tex_inner.width);
+		j := int(v_c * cast(f32)tex_inner.height);
+
+		// Sampling Image
+		pixel := texture_image_get_pixel_data(tex_inner, i, j)
+
+		color_scale : f32 = 1.0 / 255.0;
+		return Color{color_scale*cast(f32)pixel[0], color_scale*cast(f32)pixel[1], color_scale*cast(f32)pixel[2]}
 	case:
 		panic("wut?")
 	}
+}
+
+texture_image_new :: proc(image_path: string) -> Texture {
+	tex_r := Texture(TextureImage{})
+	tex_i := &tex_r.(TextureImage)
+
+	image_path_cstr := strings.clone_to_cstring(image_path, context.temp_allocator)
+	tex_i.data = stbi.load(image_path_cstr, &tex_i.width, &tex_i.height, &tex_i.nrChannels, 0)
+	ensure(tex_i.data != nil)
+
+	return tex_r
+}
+
+// Return the the 3  RGB bytes of the pixel at x,y. If there is no image
+// data, returns magenta.
+texture_image_get_pixel_data :: proc(tex: TextureImage, x, y: int) -> (res: [3]byte) {
+
+	if (tex.data == nil) do return {255, 0, 255}
+
+	x_i := math.clamp(x, 0, cast(int)tex.width)
+	y_i := math.clamp(y, 0, cast(int)tex.height)
+
+	bytes_per_pixel := cast(int)tex.nrChannels
+
+	mem.copy(&res, &tex.data[y_i * (cast(int)tex.width * bytes_per_pixel) + x_i * bytes_per_pixel], 3)
+	return
+	// return bdata + y*bytes_per_scanline + x*bytes_per_pixel;
 }
