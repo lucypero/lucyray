@@ -15,7 +15,7 @@ import stbi "vendor:stb/image"
 
 // constants
 
-SCENE_SELECT :: 2
+SCENE_SELECT :: 3
 
 INFINITY :: math.INF_F32
 PI :: math.PI
@@ -37,9 +37,42 @@ main :: proc() {
 		do_scene_checkered_balls()
 	case 2:
 		do_scene_earth()
+	case 3:
+		do_scene_perlin_spheres()
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_scene_perlin_spheres :: proc() {
+	world_list := make([dynamic]Hittable)
+
+	tex_perlin := texture_noise_new()
+	mat_perlin := Material{type = .Lambertian, texture = &tex_perlin}
+
+	append(&world_list, sphere_new_still({0,-1000,0}, 1000, &mat_perlin))
+	append(&world_list, sphere_new_still({0,2,0}, 2, &mat_perlin))
+
+	cam := camera_init(Camera{
+		// frame quality
+		image_width = 400,
+		samples_per_pixel = 100,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 20,
+
+		lookfrom = {13,2,3},
+		lookat = {0,0,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_earth :: proc() {
@@ -882,10 +915,23 @@ TextureImage :: struct {
 	data : [^]byte,
 }
 
+TextureNoise :: struct {
+	noise: Perlin
+}
+
 Texture :: union #no_nil {
 	TextureSolid,
 	TextureCheckered,
 	TextureImage,
+	TextureNoise,
+}
+
+texture_noise_new :: proc() -> (tex: Texture) {
+	tex_i : TextureNoise
+	tex_i.noise = perlin_new()
+
+	tex = tex_i
+	return
 }
 
 texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
@@ -916,6 +962,8 @@ texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
 
 		color_scale : f32 = 1.0 / 255.0;
 		return Color{color_scale*cast(f32)pixel[0], color_scale*cast(f32)pixel[1], color_scale*cast(f32)pixel[2]}
+	case TextureNoise:
+		return Color{1, 1, 1} * perlin_do_noise(tex_inner.noise, p)
 	case:
 		panic("wut?")
 	}
@@ -946,4 +994,50 @@ texture_image_get_pixel_data :: proc(tex: TextureImage, x, y: int) -> (res: [3]b
 	mem.copy(&res, &tex.data[y_i * (cast(int)tex.width * bytes_per_pixel) + x_i * bytes_per_pixel], 3)
 	return
 	// return bdata + y*bytes_per_scanline + x*bytes_per_pixel;
+}
+
+
+PERLIN_POINT_COUNT :: 256
+Perlin :: struct {
+	randfloat : [PERLIN_POINT_COUNT]f32,
+	perm_x : [PERLIN_POINT_COUNT]int,
+	perm_y : [PERLIN_POINT_COUNT]int,
+	perm_z : [PERLIN_POINT_COUNT]int,
+}
+
+perlin_new :: proc() -> (res: Perlin) {
+	for i in 0..<PERLIN_POINT_COUNT {
+		res.randfloat[i] = random_double()
+	}
+
+	perlin_generate_perm(res.perm_x[:])
+	perlin_generate_perm(res.perm_y[:])
+	perlin_generate_perm(res.perm_z[:])
+
+	return
+}
+
+perlin_generate_perm :: proc(perm: []int) {
+	for &perm, i in perm {
+		perm = i
+	}
+
+	perlin_permute(perm)
+}
+
+perlin_permute :: proc(perm: []int) {
+	for i := len(perm) - 1; i > 0; i -= 1 {
+		target := random_int(0, i)
+		tmp := perm[i]
+		perm[i] = perm[target]
+		perm[target] = tmp
+	}
+}
+
+perlin_do_noise :: proc(perlin: Perlin, p: point3) -> f32 {
+	i := int(4 * p.x) & 255
+	j := int(4 * p.y) & 255
+	k := int(4 * p.z) & 255
+
+	return perlin.randfloat[perlin.perm_x[i] ~ perlin.perm_y[j] ~ perlin.perm_z[k]]
 }
