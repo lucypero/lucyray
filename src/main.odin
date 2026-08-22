@@ -47,7 +47,7 @@ main :: proc() {
 do_scene_perlin_spheres :: proc() {
 	world_list := make([dynamic]Hittable)
 
-	tex_perlin := texture_noise_new()
+	tex_perlin := texture_noise_new(4)
 	mat_perlin := Material{type = .Lambertian, texture = &tex_perlin}
 
 	append(&world_list, sphere_new_still({0,-1000,0}, 1000, &mat_perlin))
@@ -916,7 +916,8 @@ TextureImage :: struct {
 }
 
 TextureNoise :: struct {
-	noise: Perlin
+	noise: Perlin,
+	scale: f32
 }
 
 Texture :: union #no_nil {
@@ -926,9 +927,10 @@ Texture :: union #no_nil {
 	TextureNoise,
 }
 
-texture_noise_new :: proc() -> (tex: Texture) {
+texture_noise_new :: proc(scale: f32) -> (tex: Texture) {
 	tex_i : TextureNoise
 	tex_i.noise = perlin_new()
+	tex_i.scale = scale
 
 	tex = tex_i
 	return
@@ -963,7 +965,9 @@ texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
 		color_scale : f32 = 1.0 / 255.0;
 		return Color{color_scale*cast(f32)pixel[0], color_scale*cast(f32)pixel[1], color_scale*cast(f32)pixel[2]}
 	case TextureNoise:
-		return Color{1, 1, 1} * perlin_do_noise(tex_inner.noise, p)
+		// return Color{1, 1, 1} * 0.5 * (1 + perlin_do_noise(tex_inner.noise, tex_inner.scale * p))
+		// return Color{1, 1, 1} * perlin_do_turbulence(tex_inner.noise, p, 7)
+		return Color{.5,.5,.5} * (1 + linalg.sin(tex_inner.scale * p.z + 10 * perlin_do_turbulence(tex_inner.noise, p, 7)))
 	case:
 		panic("wut?")
 	}
@@ -999,7 +1003,7 @@ texture_image_get_pixel_data :: proc(tex: TextureImage, x, y: int) -> (res: [3]b
 
 PERLIN_POINT_COUNT :: 256
 Perlin :: struct {
-	randfloat : [PERLIN_POINT_COUNT]f32,
+	randvec : [PERLIN_POINT_COUNT]v3,
 	perm_x : [PERLIN_POINT_COUNT]int,
 	perm_y : [PERLIN_POINT_COUNT]int,
 	perm_z : [PERLIN_POINT_COUNT]int,
@@ -1007,7 +1011,7 @@ Perlin :: struct {
 
 perlin_new :: proc() -> (res: Perlin) {
 	for i in 0..<PERLIN_POINT_COUNT {
-		res.randfloat[i] = random_double()
+		res.randvec[i] = linalg.normalize(v3_random_range(-1, 1))
 	}
 
 	perlin_generate_perm(res.perm_x[:])
@@ -1035,9 +1039,89 @@ perlin_permute :: proc(perm: []int) {
 }
 
 perlin_do_noise :: proc(perlin: Perlin, p: point3) -> f32 {
-	i := int(4 * p.x) & 255
-	j := int(4 * p.y) & 255
-	k := int(4 * p.z) & 255
 
-	return perlin.randfloat[perlin.perm_x[i] ~ perlin.perm_y[j] ~ perlin.perm_z[k]]
+	u := p.x - linalg.floor(p.x)
+	v := p.y - linalg.floor(p.y)
+	w := p.z - linalg.floor(p.z)
+
+	i := int(linalg.floor(p.x))
+	j := int(linalg.floor(p.y))
+	k := int(linalg.floor(p.z))
+	c : [2][2][2]v3
+
+	for di in 0..<2 {
+		for dj in 0..<2 {
+			for dk in 0..<2 {
+				c[di][dj][dk] = perlin.randvec [
+				perlin.perm_x[(i+di) & 255] ~
+				perlin.perm_y[(j+dj) & 255] ~
+				perlin.perm_z[(k+dk) & 255]
+				]
+			}
+		}
+	}
+
+	return perlin_interp(c, u, v, w)
+}
+
+perlin_do_turbulence :: proc(perlin: Perlin, p: point3, depth: int) -> f32 {
+	accum : f32
+	temp_p := p
+	weight : f32 = 1.0
+
+	for _ in 0..<depth {
+		accum += weight * perlin_do_noise(perlin, temp_p)
+		weight *= 0.5
+		temp_p *= 2
+	}
+
+	return abs(accum)
+}
+
+perlin_interp :: proc(c : [2][2][2]v3, u, v, w: f32) -> f32 {
+
+	uu := u*u*(3-2*u)
+	vv := v*v*(3-2*v)
+	ww := w*w*(3-2*w)
+	accum : f32
+
+
+	for i in 0..<2 {
+		for j in 0..<2 {
+			for k in 0..<2 {
+
+				i_f := f32(i)
+				j_f := f32(j)
+				k_f := f32(k)
+
+				weight_v := v3{u-i_f, v-j_f, w-k_f}
+				accum += ((i_f*uu + (1-i_f) *(1-uu)) *
+					(j_f*vv + (1-j_f)*(1-vv)) *
+					(k_f*ww + (1-k_f)*(1-ww)) *
+					linalg.dot(c[i][j][k], weight_v))
+			}
+		}
+	}
+
+	return accum
+}
+
+perlin_trilinear_lerp :: proc(c: [2][2][2]f32, u, v, w:f32) -> f32 {
+
+	accum : f32
+
+	for i in 0..<2 {
+		for j in 0..<2 {
+			for k in 0..<2 {
+
+				i_f := f32(i)
+				j_f := f32(j)
+				k_f := f32(k)
+
+				accum += (i_f*u + (1-i_f)*(1-u)) * (j_f*v + (1-j_f)*(1-v)) * (k_f*w + (1-k_f)*(1-w)) * c[i][j][k]
+			}
+		}
+	}
+
+	return accum
 }
