@@ -18,6 +18,7 @@ import stbi "vendor:stb/image"
 
 INFINITY :: math.INF_F32
 PI :: math.PI
+COLOR_SKY : Color : {0.70, 0.80, 1.00}
 
 viewport_height :: 2
 
@@ -29,7 +30,7 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	time_start := time.now()
-	SCENE_SELECT :: 4
+	SCENE_SELECT :: 5
 	switch SCENE_SELECT {
 	case 0:
 		do_scene_bouncing_balls()
@@ -41,9 +42,54 @@ main :: proc() {
 		do_scene_perlin_spheres()
 	case 4:
 		do_scene_quads()
+	case 5:
+		do_scene_simple_light()
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_scene_simple_light :: proc() {
+	world_list := make([dynamic]Hittable)
+
+	tex_per := texture_noise_new(4)
+	mat_per := Material{type = .Lambertian, texture = &tex_per}
+
+	append(&world_list, sphere_new_still({0, -1000, 0}, 1000, &mat_per))
+	append(&world_list, sphere_new_still({0,2,0}, 2, &mat_per))
+
+	tex_light := Texture(TextureSolid{Color{4,4,4}})
+
+	mat_diffuse_light := Material{type = .DiffuseLight, texture = &tex_light}
+
+	append(&world_list, sphere_new_still({0,7,0}, 2, &mat_diffuse_light))
+	append(&world_list, quad_new({3,1,-2}, {2,0,0}, {0,2,0}, &mat_diffuse_light))
+
+	cam := camera_init(Camera{
+
+		aspect_ratio = 16.0 / 9.0,
+
+		// frame quality
+		image_width = 400,
+		samples_per_pixel = 100,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 20,
+
+		lookfrom = {26, 3, 6},
+		lookat = {0,2,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10,
+
+		color_background = {0,0,0}
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_quads :: proc() {
@@ -79,7 +125,9 @@ do_scene_quads :: proc() {
 		vup = {0,1,0},
 
 		defocus_angle = 0,
-		focus_dist = 10
+		focus_dist = 10,
+
+		color_background = COLOR_SKY
 	})
 
 	bvh_arena := arena_new()
@@ -113,7 +161,8 @@ do_scene_perlin_spheres :: proc() {
 		vup = {0,1,0},
 
 		defocus_angle = 0,
-		focus_dist = 10
+		focus_dist = 10,
+		color_background = COLOR_SKY
 	})
 
 	bvh_arena := arena_new()
@@ -144,6 +193,8 @@ do_scene_earth :: proc() {
 
 		defocus_angle = 0,
 		focus_dist = 10,
+
+		color_background = COLOR_SKY
 	})
 
 	bvh_arena := arena_new()
@@ -179,6 +230,7 @@ do_scene_checkered_balls :: proc() {
 
 		defocus_angle = 0,
 		focus_dist = 10,
+		color_background = COLOR_SKY
 	})
 
 	bvh_arena := arena_new()
@@ -254,6 +306,7 @@ do_scene_bouncing_balls :: proc() {
 
 		defocus_angle = 0.6,
 		focus_dist = 10,
+		color_background = COLOR_SKY
 	})
 
 	camera_render(&cam, world_opt^)
@@ -493,6 +546,7 @@ Camera :: struct {
 
 	defocus_angle :f32,  // Variation angle of rays through each pixel
 	focus_dist :f32,    // Distance from camera lookfrom point to plane of perfect focus
+	color_background: Color,
 
 	// Private
 	pixel_samples_scale: f32, // Color scale factor for a sum of pixel samples
@@ -595,18 +649,21 @@ camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: Hittable) -> Co
 	// passing a limig min w a small number to avoid shadow acne
 	hit, rec := hittable_hit(world, r, {0.001, INFINITY})
 
-	if hit {
-		attenuation, scatter, did_scatter := material_scatter(rec.mat^, r, rec)
-		if did_scatter {
-			return attenuation * camera_ray_color(cam, scatter, depth - 1, world)
-		} else {
-			return {}
-		}
+	// If we've hit nothing, we return the camera background color.
+	if !hit {
+		return cam.color_background
 	}
 
-	unit_direction := linalg.vector_normalize(r.direction)
-	a := 0.5 * (unit_direction.y + 1)
-	return (1 - a) * Color{1,1,1} + a * Color{0.5, 0.7, 1.0}
+	color_attenuation, ray_scatter, did_scatter := material_scatter(rec.mat^, r, rec)
+	color_from_emission : Color = material_emitted(rec.mat^, rec.u, rec.v, rec.p)
+
+	// If the ray doesn't scatter against the material, return the emission color.
+	if !did_scatter {
+		return color_from_emission
+	} 	
+
+	color_from_scatter : Color = color_attenuation * camera_ray_color(cam, ray_scatter, depth - 1, world)
+	return color_from_emission + color_from_scatter
 }
 
 linear_to_gamma :: proc(linear_component: f32) -> f32 {
@@ -705,7 +762,8 @@ random_on_hemisphere :: proc(normal: v3) -> v3 {
 Material_Type :: enum {
 	Lambertian,
 	Metal,
-	Dielectric
+	Dielectric,
+	DiffuseLight
 }
 
 Material :: struct {
@@ -766,8 +824,22 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 		}
 
 		scattered = Ray{rec.p, direction, ray_in.tm}
+	case .DiffuseLight:
+		return {}, {}, false
 	}
 
+	return
+}
+
+material_emitted :: proc(mat:Material, u, v: f32, p: point3) -> (col: Color) {
+	switch mat.type {
+	case .DiffuseLight:
+		return texture_get_value(mat.texture^, u, v, p)
+	case .Lambertian:
+	case .Metal:
+	case .Dielectric:
+		return {0,0,0}
+	}
 	return
 }
 
