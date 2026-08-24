@@ -15,7 +15,6 @@ import stbi "vendor:stb/image"
 
 // constants
 
-SCENE_SELECT :: 3
 
 INFINITY :: math.INF_F32
 PI :: math.PI
@@ -30,6 +29,7 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	time_start := time.now()
+	SCENE_SELECT :: 4
 	switch SCENE_SELECT {
 	case 0:
 		do_scene_bouncing_balls()
@@ -39,9 +39,52 @@ main :: proc() {
 		do_scene_earth()
 	case 3:
 		do_scene_perlin_spheres()
+	case 4:
+		do_scene_quads()
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_scene_quads :: proc() {
+	world_list := make([dynamic]Hittable)
+
+
+	mat_left_red := Material{albedo = {1,0.2,0.2}, type = .Lambertian}
+	mat_back_green := Material{albedo = {0.2,1.0,0.2}, type = .Lambertian}
+	mat_right_blue := Material{albedo = {0.2,0.2,1.0}, type = .Lambertian}
+	mat_upper_orange := Material{albedo = {1.0, 0.5, 0.0}, type = .Lambertian}
+	mat_lower_teal := Material{albedo = {0.2,0.8,0.8}, type = .Lambertian}
+
+	append(&world_list, quad_new({-3,-2,5}, {0, 0, -4}, {0, 4, 0}, &mat_left_red))
+	append(&world_list, quad_new({-2,-2,0}, {4, 0, 0}, {0, 4, 0}, &mat_back_green))
+	append(&world_list, quad_new({3,-2,1}, {0, 0, 4}, {0, 4, 0}, &mat_right_blue))
+	append(&world_list, quad_new({-2,3,1}, {4,0,0}, {0,0,4}, &mat_upper_orange))
+	append(&world_list, quad_new({-2,-3,5}, {4,0,0}, {0,0,-4}, &mat_lower_teal))
+
+	cam := camera_init(Camera{
+
+		aspect_ratio = 1.0,
+
+		// frame quality
+		image_width = 400,
+		samples_per_pixel = 100,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 80,
+
+		lookfrom = {0,0,9},
+		lookat = {0,0,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_perlin_spheres :: proc() {
@@ -54,6 +97,9 @@ do_scene_perlin_spheres :: proc() {
 	append(&world_list, sphere_new_still({0,2,0}, 2, &mat_perlin))
 
 	cam := camera_init(Camera{
+
+		// aspect_ratio = 16.0 / 9.0,
+
 		// frame quality
 		image_width = 400,
 		samples_per_pixel = 100,
@@ -162,19 +208,19 @@ do_scene_bouncing_balls :: proc() {
 					albedo : Color = v3_random_range(0, 1) * v3_random_range(0, 1)
 					sphere_material^ = Material{type = .Lambertian, albedo = albedo}
 					center2 := center + v3{0, random_double(0,.5), 0}
-					append(&world, sphere_new_moving(Ray{orig = center, dir = center2 - center}, 0.2, sphere_material))
+					append(&world, sphere_new_moving(Ray{origin = center, direction = center2 - center}, 0.2, sphere_material))
 				} else if (choose_mat < 0.95) {
 					// metal
 					albedo : Color = v3_random_range(0.5, 1)
 					fuzz := random_double(0, 0.5)
 					sphere_material^ = Material{type = .Metal, albedo = albedo, fuzz = fuzz}
 					center2 := center + v3{0, random_double(0,.5), 0}
-					append(&world, sphere_new_moving(Ray{orig = center, dir = center2 - center}, 0.2, sphere_material))
+					append(&world, sphere_new_moving(Ray{origin = center, direction = center2 - center}, 0.2, sphere_material))
 				} else {
 					// glass
 					sphere_material^ = Material{type = .Dielectric, refraction_index = 1.5}
 					center2 := center + v3{0, random_double(0,.5), 0}
-					append(&world, sphere_new_moving(Ray{orig = center, dir = center2 - center}, 0.2, sphere_material))
+					append(&world, sphere_new_moving(Ray{origin = center, direction = center2 - center}, 0.2, sphere_material))
 				}
 			}
 		}
@@ -214,13 +260,13 @@ do_scene_bouncing_balls :: proc() {
 }
 
 Ray :: struct {
-	orig: point3,
-	dir: v3,
+	origin: point3,
+	direction: v3,
 	tm:f32
 }
 
 ray_at :: proc(r: Ray, t: f32) -> point3 {
-	return r.orig + t * r.dir
+	return r.origin + t * r.direction
 }
 
 write_color :: proc(sb: ^strings.Builder, pixel_color: Color) {
@@ -252,21 +298,15 @@ HitRecord :: struct {
 // Sets the hit record normal vector.
 // NOTE: the parameter `outward_normal` is assumed to have unit length.
 hr_set_face_normal :: proc(hr: ^HitRecord, r: Ray, outward_normal: v3) {
-	hr.front_face = linalg.dot(r.dir, outward_normal) < 0
+	hr.front_face = linalg.dot(r.direction, outward_normal) < 0
 	hr.normal = hr.front_face ? outward_normal : -outward_normal
 }
 
 Hittable :: union {
 	Sphere,
 	AABB,
-	BVH_Node
-}
-
-Sphere :: struct {
-	center: Ray,
-	radius: f32,
-	mat: ^Material,
-	bbox: AABB // TODO remember to init this
+	BVH_Node,
+	Quad
 }
 
 hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
@@ -277,64 +317,42 @@ hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 		return inner
 	case BVH_Node:
 		return inner.bbox
+	case Quad:
+		return inner.bbox
 	case:
 		panic("cannot reach here")
 	}
 }
 
-hittable_hit :: proc(hittable: Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
+hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
 	switch inner in hittable {
 	case Sphere:
-		sphere := inner
-
-		current_center := ray_at(sphere.center, r.tm)
-		oc := current_center - r.orig
-
-		a := linalg.length2(r.dir)
-		h := linalg.dot(r.dir, oc)
-		c := linalg.length2(oc) - (sphere.radius * sphere.radius)
-
-		discriminant := h*h - a*c
-
-		if discriminant < 0 do return false, {}
-
-		sqrtd := linalg.sqrt(discriminant)
-
-		// // Find the nearest root that lies in the acceptable range.
-		root := (h - sqrtd) / a
-
-		if !interval_surrounds(interval, root) {
-			root = (h + sqrtd) / a
-			if !interval_surrounds(interval, root) do return false, {}
-		}
-
-		rec : HitRecord
-		rec.t = root
-		rec.p = ray_at(r, rec.t)
-		rec.mat = sphere.mat
-		outward_normal := (rec.p - current_center) / sphere.radius;
-		hr_set_face_normal(&rec, r, outward_normal)
-		u, v := sphere_get_uv(sphere, outward_normal)
-		rec.u = u
-		rec.v = v
-		return true, rec
+		return sphere_hit(inner, r, ray_t)
 	case AABB:
-		return aabb_hit(inner, r, interval)
+		return aabb_hit(inner, r, ray_t)
 	case BVH_Node:
-		return bvh_node_hit(inner, r, interval)
+		return bvh_node_hit(inner, r, ray_t)
+	case Quad: 
+		return quad_hit(inner, r, ray_t)
 	case:
 		panic("unsupported shape")
 		// return false, {}
 	}
 }
 
+Sphere :: struct {
+	center: Ray,
+	radius: f32,
+	mat: ^Material,
+	bbox: AABB // TODO remember to init this
+}
 
 // inits a sphere that is standing still
 sphere_new_still :: proc(orig: v3, rad: f32, mat: ^Material) -> Sphere {
 	// calculating bbox
 	rvec := v3{rad, rad, rad}
 	bbox := aabb_new(orig - rvec, orig + rvec)
-	return Sphere{Ray{orig = orig}, rad, mat, bbox}
+	return Sphere{Ray{origin = orig}, rad, mat, bbox}
 }
 
 sphere_new_moving :: proc(center: Ray, rad: f32, mat: ^Material) -> Sphere {
@@ -344,6 +362,39 @@ sphere_new_moving :: proc(center: Ray, rad: f32, mat: ^Material) -> Sphere {
 	box2 := aabb_new(ray_at(center, 1) - rvec, ray_at(center, 1) + rvec)
 	bbox := aabb_union(box1, box2)
 	return Sphere{center, rad, mat, bbox}
+}
+
+sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+	current_center := ray_at(sphere.center, r.tm)
+	oc := current_center - r.origin
+
+	a := linalg.length2(r.direction)
+	h := linalg.dot(r.direction, oc)
+	c := linalg.length2(oc) - (sphere.radius * sphere.radius)
+
+	discriminant := h*h - a*c
+
+	if discriminant < 0 do return false, {}
+
+	sqrtd := linalg.sqrt(discriminant)
+
+	// // Find the nearest root that lies in the acceptable range.
+	root := (h - sqrtd) / a
+
+	if !interval_surrounds(ray_t, root) {
+		root = (h + sqrtd) / a
+		if !interval_surrounds(ray_t, root) do return false, {}
+	}
+
+	rec.t = root
+	rec.p = ray_at(r, rec.t)
+	rec.mat = sphere.mat
+	outward_normal := (rec.p - current_center) / sphere.radius;
+	hr_set_face_normal(&rec, r, outward_normal)
+	u, v := sphere_get_uv(sphere, outward_normal)
+	rec.u = u
+	rec.v = v
+	return true, rec
 }
 
 // p: a given point on the sphere of radius one, centered at the origin.
@@ -430,6 +481,8 @@ Camera :: struct {
 	// Public
 	image_width: int,
 
+	aspect_ratio : f32,
+
 	samples_per_pixel: int, // Count of random samples for each pixel
 	max_depth: int,
 	vfov: f32, // vertical view angle (field of view)
@@ -456,16 +509,16 @@ Camera :: struct {
 
 camera_init :: proc(cam_init: Camera) -> (cam: Camera) {
 
-	aspect_ratio :: 16.0 / 9.0
-
 	cam = cam_init
+
+	if cam.aspect_ratio == 0 do cam.aspect_ratio = 16.0 / 9.0
 
 	cam.center = cam.lookfrom
 
 	cam.sb = strings.builder_make()
 	cam.pixel_samples_scale = 1 / cast(f32)cam.samples_per_pixel;
 
-	cam.image_height = max(1, cast(int)(cast(f32)cam.image_width / aspect_ratio))
+	cam.image_height = max(1, cast(int)(cast(f32)cam.image_width / cam.aspect_ratio))
 
 	// Determine viewport dimensions.
 	theta := degrees_to_radians(cam.vfov)
@@ -551,7 +604,7 @@ camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: Hittable) -> Co
 		}
 	}
 
-	unit_direction := linalg.vector_normalize(r.dir)
+	unit_direction := linalg.vector_normalize(r.direction)
 	a := 0.5 * (unit_direction.y + 1)
 	return (1 - a) * Color{1,1,1} + a * Color{0.5, 0.7, 1.0}
 }
@@ -688,16 +741,16 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 		attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 		return
 	case .Metal:
-		reflected := v3_reflect(ray_in.dir, rec.normal)
+		reflected := v3_reflect(ray_in.direction, rec.normal)
 		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
 		scattered = Ray{rec.p, reflected, ray_in.tm}
 		attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
-		did_scatter = linalg.dot(scattered.dir, rec.normal) > 0
+		did_scatter = linalg.dot(scattered.direction, rec.normal) > 0
 		return
 	case .Dielectric:
 		attenuation = Color{1.0, 1.0, 1.0}
 		ri : f32 = rec.front_face ? (1.0/mat.refraction_index) : mat.refraction_index
-		unit_direction : v3 = linalg.normalize(ray_in.dir)
+		unit_direction : v3 = linalg.normalize(ray_in.direction)
 
 		cos_theta : f32 = min(linalg.dot(-unit_direction, rec.normal), 1.0)
 		sin_theta : f32 = linalg.sqrt(1.0 - cos_theta*cos_theta)
@@ -723,23 +776,38 @@ AABB :: struct {
 	x, y, z: Interval
 }
 
-aabb_new_empty :: proc() -> AABB {
+// Adjust the AABB so that no side is narrower than some delta, padding if necessary.
+aabb_pad_to_minimums :: proc(aabb: ^AABB) {
 
-	return AABB {
+	delta :: 0.0001
+	if interval_size(aabb.x) < delta do aabb.x = interval_expand(aabb.x, delta)
+	if interval_size(aabb.y) < delta do aabb.y = interval_expand(aabb.y, delta)
+	if interval_size(aabb.z) < delta do aabb.z = interval_expand(aabb.z, delta)
+}
+
+aabb_new_empty :: proc() -> (res: AABB) {
+
+	res = AABB {
 		x = interval_empty,
 		y = interval_empty,
 		z = interval_empty,
 	}
+
+	aabb_pad_to_minimums(&res)
+	return
 }
 
 // Treat the two points a and b as extrema for the bounding box, so we don't require a
 // particular minimum/maximum coordinate order.
-aabb_new :: proc(a, b: point3) -> AABB {
-	return AABB {
+aabb_new :: proc(a, b: point3) -> (res: AABB) {
+	res = AABB {
 		x = (a[0] <= b[0]) ? Interval{a[0], b[0]} : Interval{b[0], a[0]},
 		y = (a[1] <= b[1]) ? Interval{a[1], b[1]} : Interval{b[1], a[1]},
 		z = (a[2] <= b[2]) ? Interval{a[2], b[2]} : Interval{b[2], a[2]},
 	}
+
+	aabb_pad_to_minimums(&res)
+	return
 }
 
 // Returns the index of the longest axis of the bounding box.
@@ -781,10 +849,10 @@ aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, H
 
 		ax := aabb_get_axis_interval(aabb, axis)
 
-		adinv := 1.0 / r.dir[axis]
+		adinv := 1.0 / r.direction[axis]
 
-		t0 := (ax.min - r.orig[axis]) * adinv;
-		t1 := (ax.max - r.orig[axis]) * adinv;
+		t0 := (ax.min - r.origin[axis]) * adinv;
+		t1 := (ax.max - r.origin[axis]) * adinv;
 
 		if t0 < t1 {
 			if t0 > ray_t.min do ray_t.min = t0
@@ -1124,4 +1192,78 @@ perlin_trilinear_lerp :: proc(c: [2][2][2]f32, u, v, w:f32) -> f32 {
 	}
 
 	return accum
+}
+
+
+Quad :: struct {
+	Q: point3,
+	u, v: v3,
+	w: v3,
+	mat: ^Material,
+	bbox: AABB,
+	normal: v3,
+	D: f32,
+}
+
+quad_new :: proc(Q: point3, u,v : v3, mat: ^Material) -> (res: Quad) {
+
+	res = {
+		Q = Q,
+		u = u,
+		v = v,
+		mat = mat,
+	}
+
+	n := linalg.cross(res.u, res.v)
+	res.normal = linalg.normalize(n)
+	res.D = linalg.dot(res.normal, res.Q)
+	res.w = n / linalg.dot(n, n)
+
+	quad_set_bounding_box(&res)
+
+	return
+}
+
+// Compute the bounding box of all four vertices.
+quad_set_bounding_box :: proc(quad: ^Quad) {
+	bbox_diagonal1 := aabb_new(quad.Q, quad.Q + quad.u + quad.v)
+	bbox_diagonal2 := aabb_new(quad.Q + quad.u, quad.Q + quad.v)
+	quad.bbox = aabb_union(bbox_diagonal1, bbox_diagonal2)
+}
+
+quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+
+	denom := linalg.dot(quad.normal, r.direction)
+
+	// No hit if the ray is parallel to the plane.
+	if abs(denom) < 1e-8 do return false, rec
+
+	// Return false if the hit point parameter t is outside the ray interval.
+	t := (quad.D - linalg.dot(quad.normal, r.origin)) / denom
+	if !interval_contains(ray_t, t) do return false, rec
+
+
+	// Determine if the hit point lies within the planar shape using its plane coordinates.
+	intersection := ray_at(r, t)
+
+	planar_hitpt_vector := intersection - quad.Q
+	alpha := linalg.dot(quad.w, linalg.cross(planar_hitpt_vector, quad.v))
+	beta := linalg.dot(quad.w, linalg.cross(quad.u, planar_hitpt_vector))
+
+	unit_interval := Interval{0, 1}
+
+	// Given the hit point in plane coordinates, return false if it is outside the
+	// primitive, otherwise set the hit record UV coordinates and return true.
+	if !interval_contains(unit_interval, alpha) || !interval_contains(unit_interval, beta) do return false, rec
+
+	// Ray hits the 2D shape; set the rest of the hit record and return true.
+	rec.u = alpha
+	rec.v = beta
+	rec.t = t;
+	rec.p = intersection;
+	rec.mat = quad.mat;
+
+	hr_set_face_normal(&rec, r, quad.normal)
+
+	return true, rec;
 }
