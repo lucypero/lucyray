@@ -30,7 +30,7 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	time_start := time.now()
-	SCENE_SELECT :: 5
+	SCENE_SELECT :: 6
 	switch SCENE_SELECT {
 	case 0:
 		do_scene_bouncing_balls()
@@ -44,9 +44,61 @@ main :: proc() {
 		do_scene_quads()
 	case 5:
 		do_scene_simple_light()
+	case 6:
+		do_scene_cornell_box()
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_scene_cornell_box :: proc() {
+	world_list := make([dynamic]Hittable)
+
+	mat_red := Material{type = .Lambertian, albedo = {.65,.05,.05}}
+	mat_white := Material{type = .Lambertian, albedo = {.73, .73, .73}}
+	mat_green := Material{type = .Lambertian, albedo = {.12, .45, .15}}
+
+	mat_light := Material{type = .DiffuseLight, albedo = {15,15,15}}
+
+	// Light
+	append(&world_list, quad_new({343, 554, 332}, {-130, 0, 0}, {0, 0, -105}, &mat_light))
+
+	// Walls
+	append(&world_list, quad_new({555,0,0}, {0,555,0}, {0,0,555}, &mat_green))
+	append(&world_list, quad_new({0,0,0}, {0,555,0}, {0,0,555}, &mat_red))
+	append(&world_list, quad_new({0,0,0}, {555,0,0}, {0,0,555}, &mat_white))
+
+	// Ceiling
+	append(&world_list, quad_new({555,555,555}, {-555,0,0}, {0,0,-555}, &mat_white))
+
+	// Floor
+	append(&world_list, quad_new({0,0,555}, {555,0,0}, {0,555,0}, &mat_white))
+
+	cam := camera_init(Camera{
+
+		aspect_ratio = 1.0,
+
+		// frame quality
+		image_width = 600,
+		samples_per_pixel = 200,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 40,
+
+		lookfrom = {278, 278, -800},
+		lookat = {278, 278, 0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10,
+
+		color_background = {0,0,0},
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_simple_light :: proc() {
@@ -58,9 +110,7 @@ do_scene_simple_light :: proc() {
 	append(&world_list, sphere_new_still({0, -1000, 0}, 1000, &mat_per))
 	append(&world_list, sphere_new_still({0,2,0}, 2, &mat_per))
 
-	tex_light := Texture(TextureSolid{Color{4,4,4}})
-
-	mat_diffuse_light := Material{type = .DiffuseLight, texture = &tex_light}
+	mat_diffuse_light := Material{type = .DiffuseLight, albedo = {4,4,4}}
 
 	append(&world_list, sphere_new_still({0,7,0}, 2, &mat_diffuse_light))
 	append(&world_list, quad_new({3,1,-2}, {2,0,0}, {0,2,0}, &mat_diffuse_light))
@@ -834,7 +884,11 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 material_emitted :: proc(mat:Material, u, v: f32, p: point3) -> (col: Color) {
 	switch mat.type {
 	case .DiffuseLight:
-		return texture_get_value(mat.texture^, u, v, p)
+		if mat.texture != nil {
+			return texture_get_value(mat.texture^, u, v, p)
+		} else {
+			return mat.albedo
+		}
 	case .Lambertian:
 	case .Metal:
 	case .Dielectric:
