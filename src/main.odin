@@ -74,13 +74,16 @@ do_scene_cornell_box :: proc() {
 	// Floor
 	append(&world_list, quad_new({0,0,555}, {555,0,0}, {0,555,0}, &mat_white))
 
+	add_box_to_scene(&world_list, point3{130,0,65}, point3{295, 165, 230}, &mat_white)
+	add_box_to_scene(&world_list, point3{265, 0, 295}, point3{430, 330, 460}, &mat_white)
+
 	cam := camera_init(Camera{
 
 		aspect_ratio = 1.0,
 
 		// frame quality
-		image_width = 600,
-		samples_per_pixel = 200,
+		image_width = 300,
+		samples_per_pixel = 50,
 		max_depth = 50,
 
 		// camera parameters
@@ -99,6 +102,23 @@ do_scene_cornell_box :: proc() {
 	bvh_arena := arena_new()
 	world := bvh_node_new(world_list[:], &bvh_arena)
 	camera_render(&cam, world^)
+}
+
+// Adds 6 quads that contains the two opposite vertices a & b, to a hittable list
+add_box_to_scene :: proc(hittables: ^[dynamic]Hittable, a, b: point3, mat: ^Material) {
+	min := point3{min(a.x,b.x), min(a.y,b.y), min(a.z,b.z)}
+	max := point3{max(a.x,b.x), max(a.y,b.y), max(a.z,b.z)}
+
+	dx := v3{max.x - min.x, 0, 0}
+	dy := v3{0, max.y - min.y,0}
+	dz := v3{0,0,max.z-min.z}
+
+	append(hittables, quad_new(point3{min.x, min.y, max.z}, dx, dy, mat)) // front
+	append(hittables, quad_new(point3{max.x,min.y,max.z}, -dz, dy, mat)) // right
+	append(hittables, quad_new(point3{max.x, min.y, min.z}, -dx, dy, mat)) // back
+	append(hittables, quad_new(point3{min.x,min.y,min.z}, dz, dy, mat)) // left
+	append(hittables, quad_new(point3{min.x,max.y,max.z}, dx, -dz, mat)) // top
+	append(hittables, quad_new(point3{min.x, min.y, min.z}, dx, dz, mat)) // bottom
 }
 
 do_scene_simple_light :: proc() {
@@ -834,7 +854,7 @@ reflectance :: proc(cosine: f32, refraction_index: f32) -> f32 {
 	return r0 + (1-r0)*linalg.pow((1 - cosine),5)
 }
 
-material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuation: Color, scattered: Ray, did_scatter: bool) {
+material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_attenuation: Color, ray_scattered: Ray, did_scatter: bool) {
 	did_scatter = true
 
 	switch mat.type {
@@ -845,18 +865,18 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 			scatter_direction = rec.normal
 		}
 
-		scattered = Ray{rec.p, scatter_direction, ray_in.tm}
-		attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
+		ray_scattered = Ray{rec.p, scatter_direction, ray_in.tm}
+		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 		return
 	case .Metal:
 		reflected := v3_reflect(ray_in.direction, rec.normal)
 		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
-		scattered = Ray{rec.p, reflected, ray_in.tm}
-		attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
-		did_scatter = linalg.dot(scattered.direction, rec.normal) > 0
+		ray_scattered = Ray{rec.p, reflected, ray_in.tm}
+		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
+		did_scatter = linalg.dot(ray_scattered.direction, rec.normal) > 0
 		return
 	case .Dielectric:
-		attenuation = Color{1.0, 1.0, 1.0}
+		col_attenuation = Color{1.0, 1.0, 1.0}
 		ri : f32 = rec.front_face ? (1.0/mat.refraction_index) : mat.refraction_index
 		unit_direction : v3 = linalg.normalize(ray_in.direction)
 
@@ -873,7 +893,7 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (attenuat
 			direction = v3_refract(unit_direction, rec.normal, ri)
 		}
 
-		scattered = Ray{rec.p, direction, ray_in.tm}
+		ray_scattered = Ray{rec.p, direction, ray_in.tm}
 	case .DiffuseLight:
 		return {}, {}, false
 	}
@@ -994,16 +1014,6 @@ aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, H
 	}
 
 	return true, HitRecord{}
-}
-
-HittableList :: struct {
-	objects : [dynamic]Hittable,
-	bbox: AABB,
-}
-
-hittable_list_add :: proc(hl : ^HittableList, object: Hittable) {
-	append(&hl.objects, object)
-	hl.bbox = aabb_union(hl.bbox, hittable_get_bounding_box(object))
 }
 
 BVH_Node :: struct {
