@@ -105,6 +105,13 @@ do_scene_cornell_box :: proc() {
 }
 
 // Adds 6 quads that contains the two opposite vertices a & b, to a hittable list
+
+you have to turn this into a hittable_list.;
+// A List of Hittable Objects; in the first book
+// https://raytracing.github.io/books/RayTracingInOneWeekend.html#surfacenormalsandmultipleobjects/alistofhittableobjects
+// https://raytracing.github.io/books/RayTracingTheNextWeek.html#boundingvolumehierarchies/creatingboundingboxesoflistsofobjects
+
+
 add_box_to_scene :: proc(hittables: ^[dynamic]Hittable, a, b: point3, mat: ^Material) {
 	min := point3{min(a.x,b.x), min(a.y,b.y), min(a.z,b.z)}
 	max := point3{max(a.x,b.x), max(a.y,b.y), max(a.z,b.z)}
@@ -385,7 +392,7 @@ do_scene_bouncing_balls :: proc() {
 Ray :: struct {
 	origin: point3,
 	direction: v3,
-	tm:f32
+	time:f32
 }
 
 ray_at :: proc(r: Ray, t: f32) -> point3 {
@@ -429,7 +436,9 @@ Hittable :: union {
 	Sphere,
 	AABB,
 	BVH_Node,
-	Quad
+	Quad,
+	Translate,
+	Rotate_Y
 }
 
 hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
@@ -441,6 +450,10 @@ hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 	case BVH_Node:
 		return inner.bbox
 	case Quad:
+		return inner.bbox
+	case Translate:
+		return inner.bbox
+	case Rotate_Y:
 		return inner.bbox
 	case:
 		panic("cannot reach here")
@@ -457,6 +470,10 @@ hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval) -> (bool, HitR
 		return bvh_node_hit(inner, r, ray_t)
 	case Quad: 
 		return quad_hit(inner, r, ray_t)
+	case Translate:
+		return translate_hit(inner, r, ray_t)
+	case Rotate_Y:
+		return rotate_hit(inner, r, ray_t)
 	case:
 		panic("unsupported shape")
 		// return false, {}
@@ -488,7 +505,7 @@ sphere_new_moving :: proc(center: Ray, rad: f32, mat: ^Material) -> Sphere {
 }
 
 sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
-	current_center := ray_at(sphere.center, r.tm)
+	current_center := ray_at(sphere.center, r.time)
 	oc := current_center - r.origin
 
 	a := linalg.length2(r.direction)
@@ -562,6 +579,10 @@ degrees_to_radians :: proc(degrees: f32) -> f32 {
 
 Interval :: struct {
 	min, max: f32
+}
+
+interval_offset :: proc(interval: Interval, displacement: f32) -> Interval {
+	return Interval{interval.min + displacement, interval.max + displacement}
 }
 
 interval_size :: proc(i : Interval) -> f32 {
@@ -865,13 +886,13 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_atte
 			scatter_direction = rec.normal
 		}
 
-		ray_scattered = Ray{rec.p, scatter_direction, ray_in.tm}
+		ray_scattered = Ray{rec.p, scatter_direction, ray_in.time}
 		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 		return
 	case .Metal:
 		reflected := v3_reflect(ray_in.direction, rec.normal)
 		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
-		ray_scattered = Ray{rec.p, reflected, ray_in.tm}
+		ray_scattered = Ray{rec.p, reflected, ray_in.time}
 		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 		did_scatter = linalg.dot(ray_scattered.direction, rec.normal) > 0
 		return
@@ -893,7 +914,7 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_atte
 			direction = v3_refract(unit_direction, rec.normal, ri)
 		}
 
-		ray_scattered = Ray{rec.p, direction, ray_in.tm}
+		ray_scattered = Ray{rec.p, direction, ray_in.time}
 	case .DiffuseLight:
 		return {}, {}, false
 	}
@@ -929,6 +950,14 @@ aabb_pad_to_minimums :: proc(aabb: ^AABB) {
 	if interval_size(aabb.x) < delta do aabb.x = interval_expand(aabb.x, delta)
 	if interval_size(aabb.y) < delta do aabb.y = interval_expand(aabb.y, delta)
 	if interval_size(aabb.z) < delta do aabb.z = interval_expand(aabb.z, delta)
+}
+
+aabb_translate :: proc(aabb: AABB, offset: v3) -> AABB {
+	return {
+		interval_offset(aabb.x, offset.x),
+		interval_offset(aabb.y, offset.y),
+		interval_offset(aabb.z, offset.z)
+	}
 }
 
 aabb_new_empty :: proc() -> (res: AABB) {
@@ -1402,4 +1431,121 @@ quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRec
 	hr_set_face_normal(&rec, r, quad.normal)
 
 	return true, rec;
+}
+
+Translate :: struct {
+	object: ^Hittable,
+	offset: v3,
+	bbox: AABB,
+}
+
+translate_new :: proc(object: ^Hittable, offset: v3) -> (hittable: Hittable) {
+	res := Translate {
+		object = object,
+		offset = offset
+	}
+
+	res.bbox = aabb_translate(hittable_get_bounding_box(object^), offset)
+	return res
+}
+
+translate_hit :: proc(translate: Translate, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+	// Move the ray backwards by the offset
+	ray_offset := Ray{r.origin - translate.offset, r.direction, r.time}
+
+	// Determine whether an intersection exists along the offset ray (and if so, where)
+	did_hit, hr := hittable_hit(translate.object^, ray_offset, ray_t)
+
+	if  !did_hit do return false, {}
+
+	// Move the intersection point forwards by the offset
+	hr.p += translate.offset
+
+	return true, hr;
+}
+
+Rotate_Y :: struct {
+	object: ^Hittable,
+	sin_theta, cos_theta: f32,
+	bbox : AABB
+}
+
+rotate_new :: proc(object: ^Hittable, angle: f32) -> Hittable {
+	radians := degrees_to_radians(angle)
+	rot := Rotate_Y {
+		object = object,
+		sin_theta = linalg.sin(radians),
+		cos_theta = linalg.cos(radians),
+		bbox = hittable_get_bounding_box(object^)
+	}
+
+	min := point3{INFINITY, INFINITY, INFINITY}
+	max := point3{-INFINITY, -INFINITY, -INFINITY}
+
+	for i in 0..<2 {
+		for j in 0..<2 {
+			for k in 0..<2{
+
+				i_f := cast(f32)i
+				j_f := cast(f32)j
+				k_f := cast(f32)k
+
+				x := i_f*rot.bbox.x.max + (1-i_f)*rot.bbox.x.min
+				y := j_f*rot.bbox.y.max + (1-j_f)*rot.bbox.y.min
+				z := k_f*rot.bbox.z.max + (1-k_f)*rot.bbox.z.min
+
+				newx :=  rot.cos_theta*x + rot.sin_theta*z
+				newz := -rot.sin_theta*x + rot.cos_theta*z
+
+				tester := v3{newx, y, newz}
+
+				for c in 0..<3 {
+					min[c] = linalg.min(min[c], tester[c])
+					max[c] = linalg.max(max[c], tester[c])
+				}
+			}
+		}
+	}
+
+	rot.bbox = aabb_new(min, max)
+
+	return rot
+}
+
+rotate_hit :: proc(rotate: Rotate_Y, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+
+	// Transform the ray from world space to object space.
+	origin := point3{
+		(rotate.cos_theta * r.origin.x) - (rotate.sin_theta * r.origin.z),
+		r.origin.y,
+		(rotate.sin_theta * r.origin.x) + (rotate.cos_theta * r.origin.z)
+	}
+
+	direction := v3{
+		(rotate.cos_theta * r.direction.x) - (rotate.sin_theta * r.direction.z),
+		r.direction.y,
+		(rotate.sin_theta * r.direction.x) + (rotate.cos_theta * r.direction.z)
+	}
+
+	rotated_r := Ray{origin, direction, r.time}
+
+	// Determine whether an intersection exists in object space (and if so, where).
+	did_hit, rec := hittable_hit(rotate.object^, rotated_r, ray_t)
+
+	if !did_hit do return false, {}
+
+	// Transform the intersection from object space back to world space.
+	rec.p = point3{
+		(rotate.cos_theta * rec.p.x) + (rotate.sin_theta * rec.p.z),
+		rec.p.y,
+		(-rotate.sin_theta * rec.p.x) + (rotate.cos_theta * rec.p.z)
+	}
+
+	rec.normal = v3{
+		(rotate.cos_theta * rec.normal.x) + (rotate.sin_theta * rec.normal.z),
+		rec.normal.y,
+		(-rotate.sin_theta * rec.normal.x) + (rotate.cos_theta * rec.normal.z)
+	}
+
+	return true, rec
 }
