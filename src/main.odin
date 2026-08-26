@@ -74,15 +74,24 @@ do_scene_cornell_box :: proc() {
 	// Floor
 	append(&world_list, quad_new({0,0,555}, {555,0,0}, {0,555,0}, &mat_white))
 
-	add_box_to_scene(&world_list, point3{130,0,65}, point3{295, 165, 230}, &mat_white)
-	add_box_to_scene(&world_list, point3{265, 0, 295}, point3{430, 330, 460}, &mat_white)
+	{
+		box := new_clone(box_new(point3{0,0,0}, point3{165,330,165}, &mat_white))
+		box_rotated := new_clone(rotate_new(box, 15))
+		append(&world_list, translate_new(box_rotated, {265,0,295}))
+	}
+
+	{
+		box := new_clone(box_new(point3{0,0,0}, point3{165,165,165}, &mat_white))
+		box_rotated := new_clone(rotate_new(box, -18))
+		append(&world_list, translate_new(box_rotated, {130,0,65}))
+	}
 
 	cam := camera_init(Camera{
 
 		aspect_ratio = 1.0,
 
 		// frame quality
-		image_width = 300,
+		image_width = 200,
 		samples_per_pixel = 50,
 		max_depth = 50,
 
@@ -105,14 +114,7 @@ do_scene_cornell_box :: proc() {
 }
 
 // Adds 6 quads that contains the two opposite vertices a & b, to a hittable list
-
-you have to turn this into a hittable_list.;
-// A List of Hittable Objects; in the first book
-// https://raytracing.github.io/books/RayTracingInOneWeekend.html#surfacenormalsandmultipleobjects/alistofhittableobjects
-// https://raytracing.github.io/books/RayTracingTheNextWeek.html#boundingvolumehierarchies/creatingboundingboxesoflistsofobjects
-
-
-add_box_to_scene :: proc(hittables: ^[dynamic]Hittable, a, b: point3, mat: ^Material) {
+box_new :: proc(a, b: point3, mat: ^Material) -> Hittable {
 	min := point3{min(a.x,b.x), min(a.y,b.y), min(a.z,b.z)}
 	max := point3{max(a.x,b.x), max(a.y,b.y), max(a.z,b.z)}
 
@@ -120,12 +122,18 @@ add_box_to_scene :: proc(hittables: ^[dynamic]Hittable, a, b: point3, mat: ^Mate
 	dy := v3{0, max.y - min.y,0}
 	dz := v3{0,0,max.z-min.z}
 
-	append(hittables, quad_new(point3{min.x, min.y, max.z}, dx, dy, mat)) // front
-	append(hittables, quad_new(point3{max.x,min.y,max.z}, -dz, dy, mat)) // right
-	append(hittables, quad_new(point3{max.x, min.y, min.z}, -dx, dy, mat)) // back
-	append(hittables, quad_new(point3{min.x,min.y,min.z}, dz, dy, mat)) // left
-	append(hittables, quad_new(point3{min.x,max.y,max.z}, dx, -dz, mat)) // top
-	append(hittables, quad_new(point3{min.x, min.y, min.z}, dx, dz, mat)) // bottom
+	hlist := HittableList {
+		objects = make([dynamic]Hittable, 0, 6)
+	}
+
+	hittable_list_add(&hlist, quad_new(point3{min.x, min.y, max.z}, dx, dy, mat)) // front
+	hittable_list_add(&hlist, quad_new(point3{max.x,min.y,max.z}, -dz, dy, mat)) // right
+	hittable_list_add(&hlist, quad_new(point3{max.x, min.y, min.z}, -dx, dy, mat)) // back
+	hittable_list_add(&hlist, quad_new(point3{min.x,min.y,min.z}, dz, dy, mat)) // left
+	hittable_list_add(&hlist, quad_new(point3{min.x,max.y,max.z}, dx, -dz, mat)) // top
+	hittable_list_add(&hlist, quad_new(point3{min.x, min.y, min.z}, dx, dz, mat)) // bottom
+
+	return hlist
 }
 
 do_scene_simple_light :: proc() {
@@ -438,7 +446,8 @@ Hittable :: union {
 	BVH_Node,
 	Quad,
 	Translate,
-	Rotate_Y
+	Rotate_Y,
+	HittableList,
 }
 
 hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
@@ -454,6 +463,8 @@ hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 	case Translate:
 		return inner.bbox
 	case Rotate_Y:
+		return inner.bbox
+	case HittableList:
 		return inner.bbox
 	case:
 		panic("cannot reach here")
@@ -474,6 +485,8 @@ hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval) -> (bool, HitR
 		return translate_hit(inner, r, ray_t)
 	case Rotate_Y:
 		return rotate_hit(inner, r, ray_t)
+	case HittableList:
+		return hittable_list_hit(inner, r, ray_t)
 	case:
 		panic("unsupported shape")
 		// return false, {}
@@ -1000,6 +1013,7 @@ aabb_longest_axis :: proc(aabb: AABB) -> int {
 }
 
 // constructs a AABB that encloses two input AABBs
+@(require_results)
 aabb_union :: proc(box0, box1: AABB) -> AABB {
 	return AABB {
 		x = interval_union(box0.x, box1.x),
@@ -1548,4 +1562,29 @@ rotate_hit :: proc(rotate: Rotate_Y, r: Ray, ray_t: Interval) -> (bool, HitRecor
 	}
 
 	return true, rec
+}
+
+HittableList :: struct {
+	objects: [dynamic]Hittable,
+	bbox: AABB
+}
+
+hittable_list_hit :: proc(hlist: HittableList, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+	closest_so_far := ray_t.max
+
+	for object in hlist.objects {
+		did_hit, object_hr := hittable_hit(object, r, Interval{ray_t.min, closest_so_far})
+		if did_hit {
+			hit = true
+			closest_so_far = object_hr.t
+			rec = object_hr
+		}
+	}
+
+	return
+}
+
+hittable_list_add :: proc(hlist: ^HittableList, object: Hittable) {
+	append(&hlist.objects, object)
+	hlist.bbox = aabb_union(hlist.bbox, hittable_get_bounding_box(object))
 }
