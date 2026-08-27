@@ -1672,7 +1672,7 @@ ConstantMedium :: struct {
 
 constant_medium_hit :: proc(cm: ConstantMedium, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
 
-	did_hit_1, rec1 := hittable_hit(cm.boundary^, r, ray_t)
+	did_hit_1, rec1 := hittable_hit(cm.boundary^, r, interval_universe)
 	if !did_hit_1 do return false, {}
 
 	did_hit_2, rec2 := hittable_hit(cm.boundary^, r, Interval{rec1.t + 0.0001, INFINITY})
