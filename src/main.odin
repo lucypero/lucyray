@@ -30,7 +30,7 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	time_start := time.now()
-	SCENE_SELECT :: 6
+	SCENE_SELECT :: 7
 	switch SCENE_SELECT {
 	case 0:
 		do_scene_bouncing_balls()
@@ -46,9 +46,74 @@ main :: proc() {
 		do_scene_simple_light()
 	case 6:
 		do_scene_cornell_box()
+	case 7:
+		do_scene_cornell_smoke()
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_scene_cornell_smoke :: proc() {
+	world_list := make([dynamic]Hittable)
+
+	mat_red := Material{type = .Lambertian, albedo = {.65,.05,.05}}
+	mat_white := Material{type = .Lambertian, albedo = {.73, .73, .73}}
+	mat_green := Material{type = .Lambertian, albedo = {.12, .45, .15}}
+	mat_light := Material{type = .DiffuseLight, albedo = {7,7,7}}
+
+	// Light
+	append(&world_list, quad_new({113,554,127}, {330,0,0}, {0,0,305}, &mat_light))
+
+	// Walls
+	append(&world_list, quad_new({555,0,0}, {0,555,0}, {0,0,555}, &mat_green))
+	append(&world_list, quad_new({0,0,0}, {0,555,0}, {0,0,555}, &mat_red))
+	append(&world_list, quad_new({0,0,0}, {555,0,0}, {0,0,555}, &mat_white))
+
+	// Ceiling
+	append(&world_list, quad_new({555,555,555}, {-555,0,0}, {0,0,-555}, &mat_white))
+
+	// Floor
+	append(&world_list, quad_new({0,0,555}, {555,0,0}, {0,555,0}, &mat_white))
+
+	{
+		box := new_clone(box_new(point3{0,0,0}, point3{165,330,165}, &mat_white))
+		box_rotated := new_clone(rotate_new(box, 15))
+		box_translated := new_clone(translate_new(box_rotated, {265,0,295}))
+		append(&world_list, constant_medium_new(box_translated, 0.01, Color{0,0,0}))
+	}
+
+	{
+		box := new_clone(box_new(point3{0,0,0}, point3{165,165,165}, &mat_white))
+		box_rotated := new_clone(rotate_new(box, -18))
+		box_translated := new_clone(translate_new(box_rotated, {130,0,65}))
+		append(&world_list, constant_medium_new(box_translated, 0.01, Color{1,1,1}))
+	}
+
+	cam := camera_init(Camera{
+
+		aspect_ratio = 1.0,
+
+		// frame quality
+		image_width = 600,
+		samples_per_pixel = 200,
+		max_depth = 50,
+
+		// camera parameters
+		vfov = 40,
+
+		lookfrom = {278, 278, -800},
+		lookat = {278, 278, 0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10,
+
+		color_background = {0,0,0},
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_cornell_box :: proc() {
@@ -448,6 +513,7 @@ Hittable :: union {
 	Translate,
 	Rotate_Y,
 	HittableList,
+	ConstantMedium
 }
 
 hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
@@ -466,6 +532,8 @@ hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 		return inner.bbox
 	case HittableList:
 		return inner.bbox
+	case ConstantMedium:
+		return hittable_get_bounding_box(inner.boundary^)
 	case:
 		panic("cannot reach here")
 	}
@@ -487,6 +555,8 @@ hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval) -> (bool, HitR
 		return rotate_hit(inner, r, ray_t)
 	case HittableList:
 		return hittable_list_hit(inner, r, ray_t)
+	case ConstantMedium:
+		return constant_medium_hit(inner, r, ray_t)
 	case:
 		panic("unsupported shape")
 		// return false, {}
@@ -867,7 +937,8 @@ Material_Type :: enum {
 	Lambertian,
 	Metal,
 	Dielectric,
-	DiffuseLight
+	DiffuseLight,
+	Isotropic
 }
 
 Material :: struct {
@@ -930,6 +1001,9 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_atte
 		ray_scattered = Ray{rec.p, direction, ray_in.time}
 	case .DiffuseLight:
 		return {}, {}, false
+	case .Isotropic:
+		ray_scattered = Ray{rec.p, v3_random_unit_vector(), ray_in.time}
+		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
 	}
 
 	return
@@ -946,6 +1020,7 @@ material_emitted :: proc(mat:Material, u, v: f32, p: point3) -> (col: Color) {
 	case .Lambertian:
 	case .Metal:
 	case .Dielectric:
+	case .Isotropic:
 		return {0,0,0}
 	}
 	return
@@ -1587,4 +1662,61 @@ hittable_list_hit :: proc(hlist: HittableList, r: Ray, ray_t: Interval) -> (hit:
 hittable_list_add :: proc(hlist: ^HittableList, object: Hittable) {
 	append(&hlist.objects, object)
 	hlist.bbox = aabb_union(hlist.bbox, hittable_get_bounding_box(object))
+}
+
+ConstantMedium :: struct {
+	boundary: ^Hittable,
+	neg_inv_density: f32,
+	phase_function: ^Material
+}
+
+constant_medium_hit :: proc(cm: ConstantMedium, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+
+	did_hit_1, rec1 := hittable_hit(cm.boundary^, r, ray_t)
+	if !did_hit_1 do return false, {}
+
+	did_hit_2, rec2 := hittable_hit(cm.boundary^, r, Interval{rec1.t + 0.0001, INFINITY})
+	if !did_hit_2 do return false, {}
+
+	if rec1.t < ray_t.min do rec1.t = ray_t.min
+	if rec2.t > ray_t.max do rec2.t = ray_t.max
+
+	if rec1.t >= rec2.t do return false, {}
+
+	if rec1.t < 0 do rec1.t = 0
+
+	ray_length := linalg.length(r.direction)
+	distance_inside_boundary := (rec2.t - rec1.t) * ray_length
+	hit_distance := cm.neg_inv_density * linalg.ln(random_double())
+	if hit_distance > distance_inside_boundary do return false, {}
+
+	rec.t = rec1.t + hit_distance / ray_length
+	rec.p = ray_at(r, rec.t)
+
+	rec.normal = v3{1,0,0} // arbitrary
+	rec.front_face = true // arbitrary
+	rec.mat = cm.phase_function
+
+	return true, rec
+}
+
+TextureOrColor :: union #no_nil {
+	^Texture,
+	Color
+}
+
+constant_medium_new :: proc(boundary: ^Hittable, density: f32, tex_or_color: TextureOrColor) -> Hittable {
+	cm:= ConstantMedium  {
+		boundary = boundary,
+		neg_inv_density = -1 / density,
+	}
+
+	switch val in tex_or_color {
+	case ^Texture:
+		cm.phase_function = new_clone(Material{type = .Isotropic, texture = val})
+	case Color:
+		cm.phase_function = new_clone(Material{type = .Isotropic, albedo = val})
+	}
+
+	return cm
 }
