@@ -30,7 +30,7 @@ mag :: linalg.vector_length
 
 main :: proc() {
 	time_start := time.now()
-	SCENE_SELECT :: 7
+	SCENE_SELECT :: 9
 	switch SCENE_SELECT {
 	case 0:
 		do_scene_bouncing_balls()
@@ -48,9 +48,125 @@ main :: proc() {
 		do_scene_cornell_box()
 	case 7:
 		do_scene_cornell_smoke()
+	case 8:
+		do_final_scene(800, 10000, 40)
+	case 9:
+		do_final_scene(200, 50, 4)
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
+}
+
+do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
+
+	// Ground made up of green boxes
+	mat_ground := Material{type = .Lambertian, albedo = {0.48,0.83,0.53}}
+
+	boxes_per_side : int = 20
+
+	boxes := HittableList {
+		objects = make([dynamic]Hittable)
+	}
+
+	for i in 0..<boxes_per_side {
+		for j in 0..<boxes_per_side {
+
+			i_f := cast(f32)i
+			j_f := cast(f32)j
+
+			w : f32 = 100.0
+			x0 : f32 = -1000 + i_f * w
+			z0 : f32 = -100.0 + j_f * w
+			y0 : f32 = 0
+			x1 : f32 = x0 + w
+			y1 : f32 = random_double_minmax(1, 101)
+			z1 : f32 = z0 + w
+			hittable_list_add(&boxes, box_new({x0,y0,z0}, {x1,y1,z1}, &mat_ground))
+		}
+	}
+
+	world_list := make([dynamic]Hittable)
+
+	append(&world_list, boxes)
+
+	// Light
+	mat_light := Material{type = .DiffuseLight, albedo = {7,7,7}}
+	append(&world_list, quad_new({123,554, 147}, {300,0,0}, {0,0,265}, &mat_light))
+
+	// Moving sphere
+	center1 := point3{400,400,200}
+	center2 := center1 - v3{30,0,0}
+	mat_sphere := Material{type = .Lambertian, albedo = {0.7,0.3,0.1}}
+	append(&world_list, sphere_new_moving(Ray{origin = center1, direction = center2 - center1}, 50,  &mat_sphere))
+
+	// Fog
+	mat_boundary := Material{type = .Dielectric, refraction_index = 1.5}
+	boundary_2 := sphere_new_still({0,0,0}, 5000, &mat_boundary)
+	append(&world_list, constant_medium_new(&boundary_2, .0001, Color{1,1,1}))
+
+	// Earth
+	tex_earth := texture_image_new("earthmap.jpg")
+	mat_earth := Material{type = .Lambertian, texture = &tex_earth}
+	append(&world_list, sphere_new_still({400,200,400}, 100, &mat_earth))
+
+	// ?
+	boundary := sphere_new_still({360,150,145}, 70, &mat_boundary)
+	append(&world_list, boundary)
+	append(&world_list, constant_medium_new(&boundary, 0.2, Color{0.2,0.4,0.9}))
+
+	// ?
+	tex_per := texture_noise_new(0.2)
+	mat_per := Material{type = .Lambertian, texture = &tex_per}
+	append(&world_list, sphere_new_still({220,280,300}, 80, &mat_per))
+
+	// Metal sphere (not sure which one it is)
+	mat_metal := Material{type = .Metal, fuzz = 1.0, albedo = {.8,.8,.9}}
+	append(&world_list, sphere_new_still({0,150,145}, 50, &mat_metal))
+
+
+	// Box made up of spheres
+
+	boxes2 := HittableList {
+		objects = make([dynamic]Hittable)
+	}
+	mat_white := Material{type = .Lambertian, albedo = {0.73,.73,.73}}
+	for _ in 0..<1000 {
+		hittable_list_add(&boxes2, sphere_new_still(v3_random(0,165), 10, &mat_white))
+	}
+
+	arena := arena_new()
+	bvh := bvh_node_new(boxes2.objects[:], &arena)
+	bvh_rotate := rotate_new(bvh, 15)
+	bvh_translate := translate_new(&bvh_rotate, {-100,270,395})
+	append(&world_list, bvh_translate)
+
+	// Render
+
+	cam := camera_init(Camera{
+
+		aspect_ratio = 1.0,
+
+		// frame quality
+		image_width = image_width,
+		samples_per_pixel = samples_per_pixel,
+		max_depth = max_depth,
+
+		// camera parameters
+		vfov = 40,
+
+		lookfrom = {478,278,-600},
+		lookat = {278,278,0},
+		vup = {0,1,0},
+
+		defocus_angle = 0,
+		focus_dist = 10,
+
+		color_background = {0,0,0},
+	})
+
+	bvh_arena := arena_new()
+	world := bvh_node_new(world_list[:], &bvh_arena)
+	camera_render(&cam, world^)
 }
 
 do_scene_cornell_smoke :: proc() {
@@ -571,7 +687,7 @@ Sphere :: struct {
 }
 
 // inits a sphere that is standing still
-sphere_new_still :: proc(orig: v3, rad: f32, mat: ^Material) -> Sphere {
+sphere_new_still :: proc(orig: v3, rad: f32, mat: ^Material) -> Hittable {
 	// calculating bbox
 	rvec := v3{rad, rad, rad}
 	bbox := aabb_new(orig - rvec, orig + rvec)
