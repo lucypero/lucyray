@@ -580,9 +580,9 @@ write_color :: proc(sb: ^strings.Builder, pixel_color: Color) {
 	intensity := Interval{0, 0.999}
 
 	// Apply a linear to gamma transform for gamma 2
-	r := linear_to_gamma(pixel_color.r);
-	g := linear_to_gamma(pixel_color.g);
-	b := linear_to_gamma(pixel_color.b);
+	r := linear_to_gamma(pixel_color.r)
+	g := linear_to_gamma(pixel_color.g)
+	b := linear_to_gamma(pixel_color.b)
 
 	rbyte := cast(int)(256 * interval_clamp(intensity, r))
 	gbyte := cast(int)(256 * interval_clamp(intensity, g))
@@ -696,7 +696,7 @@ sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: 
 	rec.t = root
 	rec.p = ray_at(r, rec.t)
 	rec.mat = sphere.mat
-	outward_normal := (rec.p - current_center) / sphere.radius;
+	outward_normal := (rec.p - current_center) / sphere.radius
 	hr_set_face_normal(&rec, r, outward_normal)
 	u, v := sphere_get_uv(sphere, outward_normal)
 	rec.u = u
@@ -711,8 +711,8 @@ sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: 
 //     <0 1 0> yields <0.50 1.00>       < 0 -1  0> yields <0.50 0.00>
 //     <0 0 1> yields <0.25 0.50>       < 0  0 -1> yields <0.75 0.50>
 sphere_get_uv :: proc(sph: Sphere, p: point3) -> (u, v: f32) {
-	theta := math.acos(-p.y);
-	phi := math.atan2(-p.z, p.x) + PI;
+	theta := math.acos(-p.y)
+	phi := math.atan2(-p.z, p.x) + PI
 
 	u = phi / (2*PI)
 	v = theta / PI
@@ -760,11 +760,11 @@ interval_expand :: proc(int: Interval, delta: f32) -> Interval {
 }
 
 interval_contains :: proc(i: Interval, x: f32) -> bool {
-	return i.min <= x && x <= i.max;
+	return i.min <= x && x <= i.max
 }
 
 interval_surrounds :: proc(i: Interval, x: f32) -> bool {
-	return i.min < x && x < i.max;
+	return i.min < x && x < i.max
 }
 
 interval_clamp :: proc(i: Interval, x: f32) -> f32 {
@@ -826,37 +826,37 @@ camera_init :: proc(cam_init: Camera) -> (cam: Camera) {
 	cam.center = cam.lookfrom
 
 	cam.sb = strings.builder_make()
-	cam.pixel_samples_scale = 1 / cast(f32)cam.samples_per_pixel;
+	cam.pixel_samples_scale = 1 / cast(f32)cam.samples_per_pixel
 
 	cam.image_height = max(1, cast(int)(cast(f32)cam.image_width / cam.aspect_ratio))
 
 	// Determine viewport dimensions.
 	theta := degrees_to_radians(cam.vfov)
 	h := linalg.tan(theta/2)
-	viewport_height := 2 * h * cam.focus_dist;
+	viewport_height := 2 * h * cam.focus_dist
 	viewport_width : f32 = viewport_height * (cast(f32)cam.image_width / cast(f32)cam.image_height)
 
 	// Calculate the u,v,w unit basis vectors for the camera coordinate frame.
-	cam.w = linalg.normalize(cam.lookfrom - cam.lookat);
-	cam.u = linalg.normalize(linalg.cross(cam.vup, cam.w));
-	cam.v = linalg.cross(cam.w, cam.u);
+	cam.w = linalg.normalize(cam.lookfrom - cam.lookat)
+	cam.u = linalg.normalize(linalg.cross(cam.vup, cam.w))
+	cam.v = linalg.cross(cam.w, cam.u)
 
 	// Calculate the vectors across the horizontal and down the vertical viewport edges.
 	viewport_u := viewport_width * cam.u // Vector across viewport horizontal edge
 	viewport_v := viewport_height * -cam.v // Vector down viewport vertical edge
 
 	// Calculate the horizontal and vertical delta vectors from pixel to pixel.
-	cam.pixel_delta_u = viewport_u / cast(f32)cam.image_width;
-	cam.pixel_delta_v = viewport_v / cast(f32)cam.image_height;
+	cam.pixel_delta_u = viewport_u / cast(f32)cam.image_width
+	cam.pixel_delta_v = viewport_v / cast(f32)cam.image_height
 
 	// Calculate the location of the upper left pixel.
 	viewport_upper_left : point3 = cam.center - (cam.focus_dist * cam.w) - viewport_u / 2 - viewport_v / 2
 	cam.pixel00_loc = viewport_upper_left + 0.5 * (cam.pixel_delta_u + cam.pixel_delta_v)
 
 	// Calculate the camera defocus disk basis vectors.
-	defocus_radius := cam.focus_dist * linalg.tan(degrees_to_radians(cam.defocus_angle / 2));
-	cam.defocus_disk_u = cam.u * defocus_radius;
-	cam.defocus_disk_v = cam.v * defocus_radius;
+	defocus_radius := cam.focus_dist * linalg.tan(degrees_to_radians(cam.defocus_angle / 2))
+	cam.defocus_disk_u = cam.u * defocus_radius
+	cam.defocus_disk_v = cam.v * defocus_radius
 
 	return cam
 }
@@ -881,7 +881,7 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 
 			for _ in 0 ..< cam.samples_per_pixel {
 				r: Ray = camera_get_ray(cam^, i, j)
-				pixel_color += camera_ray_color(cam^, r, cam.max_depth, world);
+				pixel_color += camera_ray_color(cam^, r, cam.max_depth, world)
 			}
 
 			write_color(&cam.sb, cam.pixel_samples_scale * pixel_color)
@@ -931,7 +931,7 @@ linear_to_gamma :: proc(linear_component: f32) -> f32 {
 // point around the pixel location i, j.
 camera_get_ray :: proc(cam: Camera, i, j: int) -> Ray {
 
-	offset := sample_square();
+	offset := sample_square()
 	pixel_sample := cam.pixel00_loc +
 	((f32(i) + offset.x) * cam.pixel_delta_u) +
 	((f32(j) + offset.y) * cam.pixel_delta_v)
@@ -985,7 +985,7 @@ v3_random :: proc{v3_random_one, v3_random_range}
 
 v3_random_unit_vector :: proc() -> v3 {
 	for {
-		p := v3_random(-1,1);
+		p := v3_random(-1,1)
 		lensq := linalg.length2(p)
 		if (1e-160 < lensq && lensq <= 1) do return p / linalg.sqrt(lensq)
 	}
@@ -997,7 +997,7 @@ v3_is_near_zero :: proc(v: v3) -> bool {
 }
 
 v3_reflect :: proc(v: v3, n: v3) -> v3 {
-	return v - 2*linalg.dot(v,n)*n;
+	return v - 2*linalg.dot(v,n)*n
 }
 
 v3_refract :: proc(uv: v3, n: v3, etai_over_etat : f32) -> v3 {
@@ -1008,10 +1008,10 @@ v3_refract :: proc(uv: v3, n: v3, etai_over_etat : f32) -> v3 {
 }
 
 random_on_hemisphere :: proc(normal: v3) -> v3 {
-	on_unit_sphere := v3_random_unit_vector();
+	on_unit_sphere := v3_random_unit_vector()
 	// In the same hemisphere as the normal
 	if linalg.dot(on_unit_sphere, normal) > 0 do return on_unit_sphere
-	return -on_unit_sphere;
+	return -on_unit_sphere
 }
 
 Mat_Lambertian :: struct {tex: TextureOrColor}
@@ -1025,7 +1025,7 @@ Material :: union #no_nil { Mat_Lambertian, Mat_Metal, Mat_Dielectric, Mat_Diffu
 reflectance :: proc(cosine: f32, refraction_index: f32) -> f32 {
 	// Use Schlick's approximation for reflectance.
 	r0 := (1 - refraction_index) / (1 + refraction_index)
-	r0 = r0*r0;
+	r0 = r0*r0
 	return r0 + (1-r0)*linalg.pow((1 - cosine),5)
 }
 
@@ -1144,9 +1144,9 @@ aabb_longest_axis :: proc(aabb: AABB) -> int {
 	z_s := interval_size(aabb.z)
 
 	if x_s > y_s {
-		return x_s > z_s ? 0 : 2;
+		return x_s > z_s ? 0 : 2
 	} else {
-		return y_s > z_s ? 1 : 2;
+		return y_s > z_s ? 1 : 2
 	}
 }
 
@@ -1178,8 +1178,8 @@ aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, H
 
 		adinv := 1.0 / r.direction[axis]
 
-		t0 := (ax.min - r.origin[axis]) * adinv;
-		t1 := (ax.max - r.origin[axis]) * adinv;
+		t0 := (ax.min - r.origin[axis]) * adinv
+		t1 := (ax.max - r.origin[axis]) * adinv
 
 		if t0 < t1 {
 			if t0 > ray_t.min do ray_t.min = t0
@@ -1251,7 +1251,7 @@ bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittabl
 		res.right, mem_err  = mv.new_clone(allocator, objects[1])
 	} else {
 		slice.sort_by(objects, comparator)
-		mid := object_span/2;
+		mid := object_span/2
 		res.left = bvh_node_new(objects[:mid], allocator)
 		res.right = bvh_node_new(objects[mid:], allocator)
 	}
@@ -1347,7 +1347,7 @@ texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
 		// Sampling Image
 		pixel := texture_image_get_pixel_data(tex_inner, i, j)
 
-		color_scale : f32 = 1.0 / 255.0;
+		color_scale : f32 = 1.0 / 255.0
 		return Color{color_scale*cast(f32)pixel[0], color_scale*cast(f32)pixel[1], color_scale*cast(f32)pixel[2]}
 	case TextureNoise:
 		// return Color{1, 1, 1} * 0.5 * (1 + perlin_do_noise(tex_inner.noise, tex_inner.scale * p))
@@ -1382,7 +1382,7 @@ texture_image_get_pixel_data :: proc(tex: TextureImage, x, y: int) -> (res: [3]b
 
 	mem.copy(&res, &tex.data[y_i * (cast(int)tex.width * bytes_per_pixel) + x_i * bytes_per_pixel], 3)
 	return
-	// return bdata + y*bytes_per_scanline + x*bytes_per_pixel;
+	// return bdata + y*bytes_per_scanline + x*bytes_per_pixel
 }
 
 
@@ -1575,13 +1575,13 @@ quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRec
 	// Ray hits the 2D shape; set the rest of the hit record and return true.
 	rec.u = alpha
 	rec.v = beta
-	rec.t = t;
-	rec.p = intersection;
-	rec.mat = quad.mat;
+	rec.t = t
+	rec.p = intersection
+	rec.mat = quad.mat
 
 	hr_set_face_normal(&rec, r, quad.normal)
 
-	return true, rec;
+	return true, rec
 }
 
 Translate :: struct {
@@ -1612,7 +1612,7 @@ translate_hit :: proc(translate: Translate, r: Ray, ray_t: Interval) -> (bool, H
 	// Move the intersection point forwards by the offset
 	hr.p += translate.offset
 
-	return true, hr;
+	return true, hr
 }
 
 Rotate_Y :: struct {
