@@ -1,5 +1,6 @@
-package main
+package lucyray
 
+import "core:strconv"
 import "core:mem"
 import "core:slice"
 import "core:fmt"
@@ -16,15 +17,21 @@ import stbi "vendor:stb/image"
 INFINITY :: math.INF_F32
 PI :: math.PI
 COLOR_SKY : Color : {0.70, 0.80, 1.00}
+SCENE_SELECT_DEFAULT :: 1
 
 v3 :: [3]f32
 point3 :: v3
 Color :: v3
 
+get_scene_select :: proc() -> uint {
+	args := &os.args
+	if len(args) < 2 do return SCENE_SELECT_DEFAULT
+	return strconv.parse_uint(args[1], 10) or_else SCENE_SELECT_DEFAULT
+}
+
 main :: proc() {
 	time_start := time.now()
-	SCENE_SELECT :: 7
-	switch SCENE_SELECT {
+	switch get_scene_select() {
 	case 0: do_scene_bouncing_balls()
 	case 1: do_scene_checkered_balls()
 	case 2: do_scene_earth()
@@ -601,7 +608,7 @@ hr_set_face_normal :: proc(hr: ^HitRecord, r: Ray, outward_normal: v3) {
 	hr.normal = hr.front_face ? outward_normal : -outward_normal
 }
 
-Hittable :: union {
+Hittable :: union #no_nil {
 	Sphere,
 	AABB,
 	BVH_Node,
@@ -614,48 +621,29 @@ Hittable :: union {
 
 hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 	switch inner in hittable {
-	case Sphere:
-		return inner.bbox
-	case AABB:
-		return inner
-	case BVH_Node:
-		return inner.bbox
-	case Quad:
-		return inner.bbox
-	case Translate:
-		return inner.bbox
-	case Rotate_Y:
-		return inner.bbox
-	case HittableList:
-		return inner.bbox
-	case ConstantMedium:
-		return hittable_get_bounding_box(inner.boundary^)
-	case:
-		panic("cannot reach here")
+	case Sphere: return inner.bbox
+	case AABB: return inner
+	case BVH_Node: return inner.bbox
+	case Quad: return inner.bbox
+	case Translate: return inner.bbox
+	case Rotate_Y: return inner.bbox
+	case HittableList: return inner.bbox
+	case ConstantMedium: return hittable_get_bounding_box(inner.boundary^)
+	case: panic("cannot reach here")
 	}
 }
 
 hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
 	switch inner in hittable {
-	case Sphere:
-		return sphere_hit(inner, r, ray_t)
-	case AABB:
-		return aabb_hit(inner, r, ray_t)
-	case BVH_Node:
-		return bvh_node_hit(inner, r, ray_t)
-	case Quad: 
-		return quad_hit(inner, r, ray_t)
-	case Translate:
-		return translate_hit(inner, r, ray_t)
-	case Rotate_Y:
-		return rotate_hit(inner, r, ray_t)
-	case HittableList:
-		return hittable_list_hit(inner, r, ray_t)
-	case ConstantMedium:
-		return constant_medium_hit(inner, r, ray_t)
-	case:
-		panic("unsupported shape")
-		// return false, {}
+	case Sphere: return sphere_hit(inner, r, ray_t)
+	case AABB: return aabb_hit(inner, r, ray_t)
+	case BVH_Node: return bvh_node_hit(inner, r, ray_t)
+	case Quad:  return quad_hit(inner, r, ray_t)
+	case Translate: return translate_hit(inner, r, ray_t)
+	case Rotate_Y: return rotate_hit(inner, r, ray_t)
+	case HittableList: return hittable_list_hit(inner, r, ray_t)
+	case ConstantMedium: return constant_medium_hit(inner, r, ray_t)
+	case: panic("unsupported shape")
 	}
 }
 
@@ -753,8 +741,6 @@ hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, Hi
 degrees_to_radians :: proc(degrees: f32) -> f32 {
 	return degrees * PI / 180
 }
-
-// Interval
 
 Interval :: struct {
 	min, max: f32
@@ -943,7 +929,6 @@ linear_to_gamma :: proc(linear_component: f32) -> f32 {
 
 // Construct a camera ray originating from the origin and directed at randomly sampled
 // point around the pixel location i, j.
-// ray get_ray(int i, int j) const {
 camera_get_ray :: proc(cam: Camera, i, j: int) -> Ray {
 
 	offset := sample_square();
@@ -1113,7 +1098,6 @@ AABB :: struct {
 
 // Adjust the AABB so that no side is narrower than some delta, padding if necessary.
 aabb_pad_to_minimums :: proc(aabb: ^AABB) {
-
 	delta :: 0.0001
 	if interval_size(aabb.x) < delta do aabb.x = interval_expand(aabb.x, delta)
 	if interval_size(aabb.y) < delta do aabb.y = interval_expand(aabb.y, delta)
@@ -1526,7 +1510,6 @@ perlin_trilinear_lerp :: proc(c: [2][2][2]f32, u, v, w:f32) -> f32 {
 
 	return accum
 }
-
 
 Quad :: struct {
 	Q: point3,
