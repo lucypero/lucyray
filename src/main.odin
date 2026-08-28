@@ -1394,8 +1394,8 @@ texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
 		u_c := interval_clamp({0, 1}, u)
 		v_c := 1 - interval_clamp({0, 1}, v)
 
-		i := int(u_c * cast(f32)tex_inner.width);
-		j := int(v_c * cast(f32)tex_inner.height);
+		i := int(u_c * cast(f32)tex_inner.width)
+		j := int(v_c * cast(f32)tex_inner.height)
 
 		// Sampling Image
 		pixel := texture_image_get_pixel_data(tex_inner, i, j)
