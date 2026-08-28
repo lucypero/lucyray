@@ -17,7 +17,7 @@ import stbi "vendor:stb/image"
 INFINITY :: math.INF_F32
 PI :: math.PI
 COLOR_SKY : Color : {0.70, 0.80, 1.00}
-SCENE_SELECT_DEFAULT :: 1
+SCENE_SELECT_DEFAULT :: 9
 
 v3 :: [3]f32
 point3 :: v3
@@ -77,7 +77,8 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 
 	world_list := make([dynamic]Hittable)
 
-	append(&world_list, boxes)
+	boxes_arena := arena_new()
+	append(&world_list, bvh_node_new(boxes.objects[:], &boxes_arena)^)
 
 	// Light
 	mat_light := Material(Mat_DiffuseLight{ Color{7,7,7}})
