@@ -13,45 +13,28 @@ import "core:math/rand"
 import "core:time"
 import stbi "vendor:stb/image"
 
-// constants
-
-
 INFINITY :: math.INF_F32
 PI :: math.PI
 COLOR_SKY : Color : {0.70, 0.80, 1.00}
-
-viewport_height :: 2
 
 v3 :: [3]f32
 point3 :: v3
 Color :: v3
 
-mag :: linalg.vector_length
-
 main :: proc() {
 	time_start := time.now()
-	SCENE_SELECT :: 9
+	SCENE_SELECT :: 7
 	switch SCENE_SELECT {
-	case 0:
-		do_scene_bouncing_balls()
-	case 1:
-		do_scene_checkered_balls()
-	case 2:
-		do_scene_earth()
-	case 3:
-		do_scene_perlin_spheres()
-	case 4:
-		do_scene_quads()
-	case 5:
-		do_scene_simple_light()
-	case 6:
-		do_scene_cornell_box()
-	case 7:
-		do_scene_cornell_smoke()
-	case 8:
-		do_final_scene(800, 10000, 40)
-	case 9:
-		do_final_scene(200, 50, 4)
+	case 0: do_scene_bouncing_balls()
+	case 1: do_scene_checkered_balls()
+	case 2: do_scene_earth()
+	case 3: do_scene_perlin_spheres()
+	case 4: do_scene_quads()
+	case 5: do_scene_simple_light()
+	case 6: do_scene_cornell_box()
+	case 7: do_scene_cornell_smoke()
+	case 8: do_final_scene(800, 10000, 40)
+	case 9: do_final_scene(200, 50, 4)
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
@@ -60,7 +43,7 @@ main :: proc() {
 do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 
 	// Ground made up of green boxes
-	mat_ground := Material{type = .Lambertian, albedo = {0.48,0.83,0.53}}
+	mat_ground : Material = Mat_Lambertian{Color{0.48,0.83,0.53}}
 
 	boxes_per_side : int = 20
 
@@ -90,23 +73,23 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 	append(&world_list, boxes)
 
 	// Light
-	mat_light := Material{type = .DiffuseLight, albedo = {7,7,7}}
+	mat_light := Material(Mat_DiffuseLight{ Color{7,7,7}})
 	append(&world_list, quad_new({123,554, 147}, {300,0,0}, {0,0,265}, &mat_light))
 
 	// Moving sphere
 	center1 := point3{400,400,200}
 	center2 := center1 - v3{30,0,0}
-	mat_sphere := Material{type = .Lambertian, albedo = {0.7,0.3,0.1}}
+	mat_sphere := Material(Mat_Lambertian{ Color{0.7,0.3,0.1}})
 	append(&world_list, sphere_new_moving(Ray{origin = center1, direction = center2 - center1}, 50,  &mat_sphere))
 
 	// Fog
-	mat_boundary := Material{type = .Dielectric, refraction_index = 1.5}
+	mat_boundary := Material(Mat_Dielectric{ refraction_index = 1.5})
 	boundary_2 := sphere_new_still({0,0,0}, 5000, &mat_boundary)
 	append(&world_list, constant_medium_new(&boundary_2, .0001, Color{1,1,1}))
 
 	// Earth
 	tex_earth := texture_image_new("earthmap.jpg")
-	mat_earth := Material{type = .Lambertian, texture = &tex_earth}
+	mat_earth := Material(Mat_Lambertian{&tex_earth})
 	append(&world_list, sphere_new_still({400,200,400}, 100, &mat_earth))
 
 	// ?
@@ -116,20 +99,18 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 
 	// ?
 	tex_per := texture_noise_new(0.2)
-	mat_per := Material{type = .Lambertian, texture = &tex_per}
+	mat_per := Material(Mat_Lambertian{ &tex_per})
 	append(&world_list, sphere_new_still({220,280,300}, 80, &mat_per))
 
 	// Metal sphere (not sure which one it is)
-	mat_metal := Material{type = .Metal, fuzz = 1.0, albedo = {.8,.8,.9}}
+	mat_metal := Material(Mat_Metal{Color{.8,.8,.9}, 1.0})
 	append(&world_list, sphere_new_still({0,150,145}, 50, &mat_metal))
 
-
 	// Box made up of spheres
-
 	boxes2 := HittableList {
 		objects = make([dynamic]Hittable)
 	}
-	mat_white := Material{type = .Lambertian, albedo = {0.73,.73,.73}}
+	mat_white := Material(Mat_Lambertian{Color{0.73,.73,.73}})
 	for _ in 0..<1000 {
 		hittable_list_add(&boxes2, sphere_new_still(v3_random(0,165), 10, &mat_white))
 	}
@@ -141,7 +122,6 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 	append(&world_list, bvh_translate)
 
 	// Render
-
 	cam := camera_init(Camera{
 
 		aspect_ratio = 1.0,
@@ -172,10 +152,10 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 do_scene_cornell_smoke :: proc() {
 	world_list := make([dynamic]Hittable)
 
-	mat_red := Material{type = .Lambertian, albedo = {.65,.05,.05}}
-	mat_white := Material{type = .Lambertian, albedo = {.73, .73, .73}}
-	mat_green := Material{type = .Lambertian, albedo = {.12, .45, .15}}
-	mat_light := Material{type = .DiffuseLight, albedo = {7,7,7}}
+	mat_red := Material(Mat_Lambertian{ Color{.65,.05,.05}})
+	mat_white := Material(Mat_Lambertian{ Color{.73, .73, .73}})
+	mat_green := Material(Mat_Lambertian{ Color{.12, .45, .15}})
+	mat_light := Material(Mat_DiffuseLight{ Color{7,7,7}})
 
 	// Light
 	append(&world_list, quad_new({113,554,127}, {330,0,0}, {0,0,305}, &mat_light))
@@ -235,11 +215,11 @@ do_scene_cornell_smoke :: proc() {
 do_scene_cornell_box :: proc() {
 	world_list := make([dynamic]Hittable)
 
-	mat_red := Material{type = .Lambertian, albedo = {.65,.05,.05}}
-	mat_white := Material{type = .Lambertian, albedo = {.73, .73, .73}}
-	mat_green := Material{type = .Lambertian, albedo = {.12, .45, .15}}
+	mat_red := Material(Mat_Lambertian{ Color{.65,.05,.05}})
+	mat_white := Material(Mat_Lambertian{ Color{.73, .73, .73}})
+	mat_green := Material(Mat_Lambertian{ Color{.12, .45, .15}})
 
-	mat_light := Material{type = .DiffuseLight, albedo = {15,15,15}}
+	mat_light := Material(Mat_DiffuseLight{ Color{15,15,15}})
 
 	// Light
 	append(&world_list, quad_new({343, 554, 332}, {-130, 0, 0}, {0, 0, -105}, &mat_light))
@@ -321,12 +301,12 @@ do_scene_simple_light :: proc() {
 	world_list := make([dynamic]Hittable)
 
 	tex_per := texture_noise_new(4)
-	mat_per := Material{type = .Lambertian, texture = &tex_per}
+	mat_per := Material(Mat_Lambertian{ &tex_per})
 
 	append(&world_list, sphere_new_still({0, -1000, 0}, 1000, &mat_per))
 	append(&world_list, sphere_new_still({0,2,0}, 2, &mat_per))
 
-	mat_diffuse_light := Material{type = .DiffuseLight, albedo = {4,4,4}}
+	mat_diffuse_light := Material(Mat_DiffuseLight{ Color{4,4,4}})
 
 	append(&world_list, sphere_new_still({0,7,0}, 2, &mat_diffuse_light))
 	append(&world_list, quad_new({3,1,-2}, {2,0,0}, {0,2,0}, &mat_diffuse_light))
@@ -362,11 +342,11 @@ do_scene_quads :: proc() {
 	world_list := make([dynamic]Hittable)
 
 
-	mat_left_red := Material{albedo = {1,0.2,0.2}, type = .Lambertian}
-	mat_back_green := Material{albedo = {0.2,1.0,0.2}, type = .Lambertian}
-	mat_right_blue := Material{albedo = {0.2,0.2,1.0}, type = .Lambertian}
-	mat_upper_orange := Material{albedo = {1.0, 0.5, 0.0}, type = .Lambertian}
-	mat_lower_teal := Material{albedo = {0.2,0.8,0.8}, type = .Lambertian}
+	mat_left_red := Material(Mat_Lambertian{Color{1,0.2,0.2}})
+	mat_back_green := Material(Mat_Lambertian{Color{0.2,1.0,0.2}})
+	mat_right_blue := Material(Mat_Lambertian{Color{0.2,0.2,1.0}})
+	mat_upper_orange := Material(Mat_Lambertian{Color{1.0, 0.5, 0.0}})
+	mat_lower_teal := Material(Mat_Lambertian{Color{0.2,0.8,0.8}})
 
 	append(&world_list, quad_new({-3,-2,5}, {0, 0, -4}, {0, 4, 0}, &mat_left_red))
 	append(&world_list, quad_new({-2,-2,0}, {4, 0, 0}, {0, 4, 0}, &mat_back_green))
@@ -405,7 +385,7 @@ do_scene_perlin_spheres :: proc() {
 	world_list := make([dynamic]Hittable)
 
 	tex_perlin := texture_noise_new(4)
-	mat_perlin := Material{type = .Lambertian, texture = &tex_perlin}
+	mat_perlin := Material(Mat_Lambertian{ &tex_perlin})
 
 	append(&world_list, sphere_new_still({0,-1000,0}, 1000, &mat_perlin))
 	append(&world_list, sphere_new_still({0,2,0}, 2, &mat_perlin))
@@ -440,7 +420,7 @@ do_scene_earth :: proc() {
 	world_list := make([dynamic]Hittable)
 
 	tex_earth := texture_image_new("earthmap.jpg")
-	mat_earth := Material{type = .Lambertian, texture = &tex_earth}
+	mat_earth := Material(Mat_Lambertian{ &tex_earth})
 
 	append(&world_list, sphere_new_still({0,0,0}, 2, &mat_earth))
 
@@ -476,7 +456,7 @@ do_scene_checkered_balls :: proc() {
 	tex_black := Texture(TextureSolid{Color{.2,.3,.1}})
 	tex_checker := Texture(TextureCheckered{1 / 0.32, &tex_white, &tex_black})
 
-	mat_checkered := Material{type = .Lambertian, texture = &tex_checker}
+	mat_checkered := Material(Mat_Lambertian{ &tex_checker})
 
 	append(&world_list, sphere_new_still({0,-10,0}, 10, &mat_checkered))
 	append(&world_list, sphere_new_still({0,10,0}, 10, &mat_checkered))
@@ -509,7 +489,7 @@ do_scene_bouncing_balls :: proc() {
 
 	world := make([dynamic]Hittable, 0, 20, allocator = context.temp_allocator)
 
-	material_ground := Material{albedo = {0.5,0.5,0.5}, type = .Lambertian}
+	material_ground := Material(Mat_Lambertian{Color{0.5,0.5,0.5}})
 	append(&world, sphere_new_still({ 0.0, -1000, 0}, 1000.0, &material_ground))
 
 	for a := -11; a < 11 ; a+=1 {
@@ -524,19 +504,19 @@ do_scene_bouncing_balls :: proc() {
 				if (choose_mat < 0.8) {
 					// diffuse
 					albedo : Color = v3_random_range(0, 1) * v3_random_range(0, 1)
-					sphere_material^ = Material{type = .Lambertian, albedo = albedo}
+					sphere_material^ = Material(Mat_Lambertian{albedo})
 					center2 := center + v3{0, random_double(0,.5), 0}
 					append(&world, sphere_new_moving(Ray{origin = center, direction = center2 - center}, 0.2, sphere_material))
 				} else if (choose_mat < 0.95) {
 					// metal
 					albedo : Color = v3_random_range(0.5, 1)
 					fuzz := random_double(0, 0.5)
-					sphere_material^ = Material{type = .Metal, albedo = albedo, fuzz = fuzz}
+					sphere_material^ = Material(Mat_Metal{ albedo, fuzz})
 					center2 := center + v3{0, random_double(0,.5), 0}
 					append(&world, sphere_new_moving(Ray{origin = center, direction = center2 - center}, 0.2, sphere_material))
 				} else {
 					// glass
-					sphere_material^ = Material{type = .Dielectric, refraction_index = 1.5}
+					sphere_material^ = Material(Mat_Dielectric{ refraction_index = 1.5})
 					center2 := center + v3{0, random_double(0,.5), 0}
 					append(&world, sphere_new_moving(Ray{origin = center, direction = center2 - center}, 0.2, sphere_material))
 				}
@@ -544,13 +524,13 @@ do_scene_bouncing_balls :: proc() {
 		}
 	}
 
-	material1 := Material{type = .Dielectric, refraction_index = 1.5}
+	material1 := Material(Mat_Dielectric{ refraction_index = 1.5})
 	append(&world, sphere_new_still({0,1,0}, 1, &material1))
 
-	material2 := Material{type = .Lambertian, albedo = {0.4,0.2,0.1}}
+	material2 := Material(Mat_Lambertian{ Color{0.4,0.2,0.1}})
 	append(&world, sphere_new_still({-4,1,0}, 1, &material2))
 
-	material3 := Material{type = .Metal, albedo = {0.7, 0.6, 0.5}, fuzz = 0}
+	material3 := Material(Mat_Metal{ Color{0.7, 0.6, 0.5}, 0})
 	append(&world, sphere_new_still({4,1,0}, 1, &material3))
 
 
@@ -1049,24 +1029,13 @@ random_on_hemisphere :: proc(normal: v3) -> v3 {
 	return -on_unit_sphere;
 }
 
-Material_Type :: enum {
-	Lambertian,
-	Metal,
-	Dielectric,
-	DiffuseLight,
-	Isotropic
-}
+Mat_Lambertian :: struct {tex: TextureOrColor}
+Mat_Metal :: struct {tex: TextureOrColor, fuzz: f32}
+Mat_Dielectric :: struct {refraction_index:f32}
+Mat_DiffuseLight :: struct {tex: TextureOrColor}
+Mat_Isotropic :: struct {tex: TextureOrColor}
 
-Material :: struct {
-	texture: ^Texture,
-	fuzz: f32,
-
-	// Refractive index in vacuum or air, or the ratio of the material's refractive index over
-	// the refractive index of the enclosing media
-	albedo: Color, // Fallback used if texture is nil
-	refraction_index: f32,
-	type: Material_Type,
-}
+Material :: union #no_nil { Mat_Lambertian, Mat_Metal, Mat_Dielectric, Mat_DiffuseLight, Mat_Isotropic }
 
 reflectance :: proc(cosine: f32, refraction_index: f32) -> f32 {
 	// Use Schlick's approximation for reflectance.
@@ -1078,8 +1047,8 @@ reflectance :: proc(cosine: f32, refraction_index: f32) -> f32 {
 material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_attenuation: Color, ray_scattered: Ray, did_scatter: bool) {
 	did_scatter = true
 
-	switch mat.type {
-	case .Lambertian:
+	switch m_inner in mat {
+	case Mat_Lambertian:
 		scatter_direction := rec.normal + v3_random_unit_vector()
 
 		if v3_is_near_zero(scatter_direction) {
@@ -1087,18 +1056,18 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_atte
 		}
 
 		ray_scattered = Ray{rec.p, scatter_direction, ray_in.time}
-		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
+		col_attenuation = texture_or_color_sample(m_inner.tex, rec.u, rec.v, rec.p)
 		return
-	case .Metal:
+	case Mat_Metal:
 		reflected := v3_reflect(ray_in.direction, rec.normal)
-		reflected = linalg.normalize(reflected) + (mat.fuzz * v3_random_unit_vector())
+		reflected = linalg.normalize(reflected) + (m_inner.fuzz * v3_random_unit_vector())
 		ray_scattered = Ray{rec.p, reflected, ray_in.time}
-		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
+		col_attenuation = texture_or_color_sample(m_inner.tex, rec.u, rec.v, rec.p)
 		did_scatter = linalg.dot(ray_scattered.direction, rec.normal) > 0
 		return
-	case .Dielectric:
+	case Mat_Dielectric:
 		col_attenuation = Color{1.0, 1.0, 1.0}
-		ri : f32 = rec.front_face ? (1.0/mat.refraction_index) : mat.refraction_index
+		ri : f32 = rec.front_face ? (1.0/m_inner.refraction_index) : m_inner.refraction_index
 		unit_direction : v3 = linalg.normalize(ray_in.direction)
 
 		cos_theta : f32 = min(linalg.dot(-unit_direction, rec.normal), 1.0)
@@ -1109,34 +1078,29 @@ material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_atte
 
 		if (cannot_refract || reflectance(cos_theta, ri) > random_double()) {
 			direction = v3_reflect(unit_direction, rec.normal)
-		}
-		else {
+		} else {
 			direction = v3_refract(unit_direction, rec.normal, ri)
 		}
 
 		ray_scattered = Ray{rec.p, direction, ray_in.time}
-	case .DiffuseLight:
+	case Mat_DiffuseLight:
 		return {}, {}, false
-	case .Isotropic:
+	case Mat_Isotropic:
 		ray_scattered = Ray{rec.p, v3_random_unit_vector(), ray_in.time}
-		col_attenuation = mat.texture == nil ? mat.albedo : texture_get_value(mat.texture^, rec.u, rec.v, rec.p)
+		col_attenuation = texture_or_color_sample(m_inner.tex, rec.u, rec.v, rec.p)
 	}
 
 	return
 }
 
 material_emitted :: proc(mat:Material, u, v: f32, p: point3) -> (col: Color) {
-	switch mat.type {
-	case .DiffuseLight:
-		if mat.texture != nil {
-			return texture_get_value(mat.texture^, u, v, p)
-		} else {
-			return mat.albedo
-		}
-	case .Lambertian:
-	case .Metal:
-	case .Dielectric:
-	case .Isotropic:
+	switch m_inner in mat {
+	case Mat_DiffuseLight:
+		return texture_or_color_sample(m_inner.tex, u,v,p)
+	case Mat_Lambertian:
+	case Mat_Metal:
+	case Mat_Dielectric:
+	case Mat_Isotropic:
 		return {0,0,0}
 	}
 	return
@@ -1197,8 +1161,7 @@ aabb_longest_axis :: proc(aabb: AABB) -> int {
 
 	if x_s > y_s {
 		return x_s > z_s ? 0 : 2;
-	}
-	else {
+	} else {
 		return y_s > z_s ? 1 : 2;
 	}
 }
@@ -1821,18 +1784,20 @@ TextureOrColor :: union #no_nil {
 	Color
 }
 
+texture_or_color_sample :: proc(tex_or_color: TextureOrColor, u,v : f32, p: point3) -> Color {
+	switch t_inner in tex_or_color {
+	case ^Texture:
+		return texture_get_value(t_inner^, u, v, p)
+	case Color:
+		return t_inner
+	}
+	panic("invalid union value")
+}
+
 constant_medium_new :: proc(boundary: ^Hittable, density: f32, tex_or_color: TextureOrColor) -> Hittable {
-	cm:= ConstantMedium  {
+	return ConstantMedium  {
 		boundary = boundary,
 		neg_inv_density = -1 / density,
+		phase_function = new_clone(Material(Mat_Isotropic{tex_or_color}))
 	}
-
-	switch val in tex_or_color {
-	case ^Texture:
-		cm.phase_function = new_clone(Material{type = .Isotropic, texture = val})
-	case Color:
-		cm.phase_function = new_clone(Material{type = .Isotropic, albedo = val})
-	}
-
-	return cm
 }
