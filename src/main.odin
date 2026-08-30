@@ -1,5 +1,6 @@
 package lucyray
 
+import "core:sync"
 import "core:thread"
 import "core:strconv"
 import "core:mem"
@@ -18,7 +19,7 @@ import stbi "vendor:stb/image"
 INFINITY :: math.INF_F32
 PI :: math.PI
 COLOR_SKY : Color : {0.70, 0.80, 1.00}
-SCENE_SELECT_DEFAULT :: 8
+SCENE_SELECT_DEFAULT :: 0
 
 v2i :: [2]int
 v3 :: [3]f32
@@ -878,37 +879,59 @@ camera_defocus_disk_sample :: proc(cam: Camera) -> v3{
 g_cam: Camera
 g_out_buffer: []Color
 g_world: Hittable
+g_tile_width: int
+g_tile_counter: int
+g_tile_total: int
+g_tile_x_count: int
+g_tile_y_count: int
 
 camera_render :: proc(cam: ^Camera, world: Hittable) {
 	g_out_buffer = make([]Color, cam.image_width * cam.image_height)
 	g_cam = cam^
 	g_world = world
 
+	g_tile_width = 32
+	g_tile_x_count = cam.image_width / g_tile_width
+	g_tile_y_count = cam.image_height / g_tile_width
+	if cam.image_width % g_tile_width != 0 do g_tile_x_count += 1
+	if cam.image_height % g_tile_width != 0 do g_tile_y_count += 1
+	g_tile_total = g_tile_x_count * g_tile_y_count
+
+
 	ThreadData :: struct {
-		tid: int,
-		time_spent: time.Duration
+		in_tid: int,
+		out_time_spent: time.Duration
 	}
 
 	thread_main :: proc(data: rawptr) {
+		time_start := time.now()
 		tdata := cast(^ThreadData)data
 
-		time_start := time.now()
+		for {
+			tile_i := sync.atomic_add(&g_tile_counter, 1)
+			if tile_i > g_tile_total do break
 
-		thread_count := os.get_processor_core_count()
-		pixels_per_thread := (g_cam.image_height * g_cam.image_width) / thread_count
-		pixel_start := tdata.tid * pixels_per_thread
+			x_start := (tile_i % g_tile_x_count) * g_tile_width
+			y_start := (tile_i / g_tile_x_count) * g_tile_width
 
-		for p in pixel_start..<pixel_start + pixels_per_thread {
-			pixel_color : Color 
-			for _ in 0 ..< g_cam.samples_per_pixel {
-				r: Ray = camera_get_ray(g_cam, p % g_cam.image_width, p / g_cam.image_width)
-				pixel_color += camera_ray_color(g_cam, r, g_cam.max_depth, g_world)
+			// prob and off by one error here
+			x_end := min(x_start + g_tile_width, g_cam.image_width)
+			y_end := min(y_start + g_tile_width, g_cam.image_height)
+
+			for y in y_start..<y_end {
+				for x in x_start..<x_end {
+					pixel_color : Color 
+					for _ in 0 ..< g_cam.samples_per_pixel {
+						r: Ray = camera_get_ray(g_cam, x, y)
+						pixel_color += camera_ray_color(g_cam, r, g_cam.max_depth, g_world)
+					}
+					g_out_buffer[y * g_cam.image_width + x] = g_cam.pixel_samples_scale * pixel_color
+				}
 			}
-			g_out_buffer[p] = g_cam.pixel_samples_scale * pixel_color
 		}
-		time_end := time.now()
 
-		tdata.time_spent = time.diff(time_start,time_end)
+		time_end := time.now()
+		tdata.out_time_spent = time.diff(time_start, time_end)
 	}
 
 	thread_count := os.get_processor_core_count()
@@ -917,7 +940,7 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 	tdata := make([]ThreadData, thread_count)
 
 	for &t, i in threads {
-		tdata[i].tid = i
+		tdata[i].in_tid = i
 		t = thread.create_and_start_with_data(&tdata[i], thread_main)
 	}
 
@@ -931,8 +954,8 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 	tmax : time.Duration = time.MIN_DURATION
 
 	for data in tdata {
-		if data.time_spent < tmin do tmin = data.time_spent
-		if data.time_spent > tmax do tmax = data.time_spent
+		if data.out_time_spent < tmin do tmin = data.out_time_spent
+		if data.out_time_spent > tmax do tmax = data.out_time_spent
 	}
 
 	fmt.printfln("Thread timing delta: [%v,%v], magnitude: %v", tmin, tmax, tmax-tmin)
