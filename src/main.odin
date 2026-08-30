@@ -1,12 +1,13 @@
 package lucyray
 
+TRACY_ENABLE :: #config(TRACY_ENABLE, false)
+
 import "core:sync"
 import "core:thread"
 import "core:strconv"
 import "core:mem"
 import "core:slice"
 import "core:fmt"
-// import "core:mem"
 import mv "core:mem/virtual"
 import "core:os"
 import "core:strings"
@@ -15,6 +16,7 @@ import "core:math"
 import "core:math/rand"
 import "core:time"
 import stbi "vendor:stb/image"
+import tracy "../../third_party/odin-tracy"
 
 INFINITY :: math.INF_F32
 PI :: math.PI
@@ -33,6 +35,7 @@ get_scene_select :: proc() -> uint {
 }
 
 main :: proc() {
+	tracy.SetThreadName("main")
 	time_start := time.now()
 	switch get_scene_select() {
 	case 0: do_scene_bouncing_balls()
@@ -44,7 +47,7 @@ main :: proc() {
 	case 6: do_scene_cornell_box()
 	case 7: do_scene_cornell_smoke()
 	case 8: do_final_scene(400, 200, 5)
-	case 9: do_final_scene(800, 10000, 40)
+	case 9: do_final_scene(800, 1000, 10)
 	case: panic("scene does not exist. choose another number.")
 	}
 	time_after := time.now()
@@ -55,6 +58,7 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 
 	// Ground made up of green boxes
 	mat_ground : Material = Mat_Lambertian{Color{0.48,0.83,0.53}}
+
 
 	boxes_per_side : int = 20
 
@@ -660,7 +664,7 @@ Sphere :: struct {
 	center: Ray,
 	radius: f32,
 	mat: ^Material,
-	bbox: AABB // TODO remember to init this
+	bbox: AABB
 }
 
 // inits a sphere that is standing still
@@ -906,10 +910,21 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 	thread_main :: proc(data: rawptr) {
 		time_start := time.now()
 		tdata := cast(^ThreadData)data
+		ar := arena_new()
+		context.temp_allocator = mv.arena_allocator(&ar)
 
 		for {
+
+
 			tile_i := sync.atomic_add(&g_tile_counter, 1)
 			if tile_i > g_tile_total do break
+
+			when TRACY_ENABLE {
+			tile_zone_tag := fmt.tprintf("Zone %v/%v", tile_i, g_tile_total)
+			tracy.ZoneN(tile_zone_tag);
+			}
+
+
 
 			x_start := (tile_i % g_tile_x_count) * g_tile_width
 			y_start := (tile_i / g_tile_x_count) * g_tile_width
@@ -928,6 +943,8 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 					g_out_buffer[y * g_cam.image_width + x] = g_cam.pixel_samples_scale * pixel_color
 				}
 			}
+
+			fmt.printfln("Tiles Rendered: %v/%v", tile_i, g_tile_total)
 		}
 
 		time_end := time.now()
@@ -976,6 +993,7 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 }
 
 camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: Hittable) -> Color {
+
 
 	// If we've exceeded the ray bounce limit, no more light is gathered.
 	if depth <= 0 do return Color{0,0,0}
@@ -1108,6 +1126,7 @@ reflectance :: proc(cosine: f32, refraction_index: f32) -> f32 {
 }
 
 material_scatter :: proc(mat:Material, ray_in: Ray, rec: HitRecord) -> (col_attenuation: Color, ray_scattered: Ray, did_scatter: bool) {
+
 	did_scatter = true
 
 	switch m_inner in mat {
@@ -1338,6 +1357,7 @@ bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittabl
 }
 
 bvh_node_hit :: proc(bvh_node: BVH_Node, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+
 	if did_hit, _ := aabb_hit(bvh_node.bbox, r, ray_t); !did_hit {
 		return false, HitRecord{}
 	}
@@ -1401,10 +1421,12 @@ texture_noise_new :: proc(scale: f32) -> (tex: Texture) {
 
 texture_get_value :: proc(tex: Texture, u, v: f32, p: point3) -> Color {
 
+
 	switch tex_inner in tex {
 	case TextureSolid:
 		return tex_inner.albedo
 	case TextureCheckered:
+
 		xInteger := int(math.floor(tex_inner.inv_scale * p.x))
 		yInteger := int(math.floor(tex_inner.inv_scale * p.y))
 		zInteger := int(math.floor(tex_inner.inv_scale * p.z))
@@ -1627,6 +1649,7 @@ quad_set_bounding_box :: proc(quad: ^Quad) {
 
 quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
 
+
 	denom := linalg.dot(quad.normal, r.direction)
 
 	// No hit if the ray is parallel to the plane.
@@ -1679,6 +1702,7 @@ translate_new :: proc(object: ^Hittable, offset: v3) -> (hittable: Hittable) {
 }
 
 translate_hit :: proc(translate: Translate, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+
 	// Move the ray backwards by the offset
 	ray_offset := Ray{r.origin - translate.offset, r.direction, r.time}
 
@@ -1742,6 +1766,7 @@ rotate_new :: proc(object: ^Hittable, angle: f32) -> Hittable {
 }
 
 rotate_hit :: proc(rotate: Rotate_Y, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+
 
 	// Transform the ray from world space to object space.
 	origin := point3{

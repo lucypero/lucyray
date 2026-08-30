@@ -39,4 +39,14 @@
 		"save": "all",
 		"shell": { "program": "nu" },
 	},
+	{
+		"label": "run profile",
+		"command": "odin run src -vet -o:speed -debug -define:TRACY_ENABLE=true -keep-executable",
+		"use_new_terminal": false,
+		"allow_concurrent_runs": false,
+		"reveal": "no_focus",
+		"hide": "never",
+		"save": "all",
+		"shell": { "program": "nu" },
+	},
 ]
