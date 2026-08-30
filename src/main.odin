@@ -44,6 +44,7 @@ main :: proc() {
 	case 7: do_scene_cornell_smoke()
 	case 8: do_final_scene(400, 200, 5)
 	case 9: do_final_scene(800, 10000, 40)
+	case: panic("scene does not exist. choose another number.")
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
@@ -553,8 +554,8 @@ do_scene_bouncing_balls :: proc() {
 
 	cam := camera_init(Camera{
 		// frame quality
-		image_width = 200,
-		samples_per_pixel = 15,
+		image_width = 400,
+		samples_per_pixel = 200,
 		max_depth = 10,
 
 		// camera parameters
@@ -883,10 +884,19 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 	g_cam = cam^
 	g_world = world
 
-	thread_main :: proc(tid: int) {
+	ThreadData :: struct {
+		tid: int,
+		time_spent: time.Duration
+	}
+
+	thread_main :: proc(data: rawptr) {
+		tdata := cast(^ThreadData)data
+
+		time_start := time.now()
+
 		thread_count := os.get_processor_core_count()
 		pixels_per_thread := (g_cam.image_height * g_cam.image_width) / thread_count
-		pixel_start := tid * pixels_per_thread
+		pixel_start := tdata.tid * pixels_per_thread
 
 		for p in pixel_start..<pixel_start + pixels_per_thread {
 			pixel_color : Color 
@@ -896,13 +906,19 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 			}
 			g_out_buffer[p] = g_cam.pixel_samples_scale * pixel_color
 		}
+		time_end := time.now()
+
+		tdata.time_spent = time.diff(time_start,time_end)
 	}
 
 	thread_count := os.get_processor_core_count()
 	threads := make([]^thread.Thread, thread_count)
 
+	tdata := make([]ThreadData, thread_count)
+
 	for &t, i in threads {
-		t = thread.create_and_start_with_poly_data(i, thread_main)
+		tdata[i].tid = i
+		t = thread.create_and_start_with_data(&tdata[i], thread_main)
 	}
 
 	thread.join_multiple(..threads)
@@ -911,6 +927,16 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 		thread.destroy(t)
 	}
 
+	tmin : time.Duration = time.MAX_DURATION
+	tmax : time.Duration = time.MIN_DURATION
+
+	for data in tdata {
+		if data.time_spent < tmin do tmin = data.time_spent
+		if data.time_spent > tmax do tmax = data.time_spent
+	}
+
+	fmt.printfln("Thread timing delta: [%v,%v], magnitude: %v", tmin, tmax, tmax-tmin)
+
 	// Writing Image File
 
 	fmt.sbprintf(&cam.sb, "P3\n%v %v\n255\n", cam.image_width, cam.image_height)
@@ -918,8 +944,6 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 	for pixel in 0..<cam.image_width * cam.image_height {
 		write_color(&cam.sb, g_out_buffer[pixel])
 	}
-
-	fmt.printfln("Done.")
 
 	// linalg.vector_length()
 	err := os.write_entire_file_from_string("image.ppm", strings.to_string(cam.sb))
