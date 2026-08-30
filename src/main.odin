@@ -1,5 +1,6 @@
 package lucyray
 
+import "core:thread"
 import "core:strconv"
 import "core:mem"
 import "core:slice"
@@ -17,8 +18,9 @@ import stbi "vendor:stb/image"
 INFINITY :: math.INF_F32
 PI :: math.PI
 COLOR_SKY : Color : {0.70, 0.80, 1.00}
-SCENE_SELECT_DEFAULT :: 9
+SCENE_SELECT_DEFAULT :: 8
 
+v2i :: [2]int
 v3 :: [3]f32
 point3 :: v3
 Color :: v3
@@ -40,8 +42,8 @@ main :: proc() {
 	case 5: do_scene_simple_light()
 	case 6: do_scene_cornell_box()
 	case 7: do_scene_cornell_smoke()
-	case 8: do_final_scene(800, 10000, 40)
-	case 9: do_final_scene(200, 50, 4)
+	case 8: do_final_scene(400, 200, 5)
+	case 9: do_final_scene(800, 10000, 40)
 	}
 	time_after := time.now()
 	fmt.printfln("Took %v", time.diff(time_start, time_after))
@@ -90,9 +92,10 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 	mat_sphere := Material(Mat_Lambertian{ Color{0.7,0.3,0.1}})
 	append(&world_list, sphere_new_moving(Ray{origin = center1, direction = center2 - center1}, 50,  &mat_sphere))
 
+	mat_dielectric := Material(Mat_Dielectric{ refraction_index = 1.5})
+
 	// Fog
-	mat_boundary := Material(Mat_Dielectric{ refraction_index = 1.5})
-	boundary_2 := sphere_new_still({0,0,0}, 5000, &mat_boundary)
+	boundary_2 := sphere_new_still({0,0,0}, 5000, &mat_dielectric)
 	append(&world_list, constant_medium_new(&boundary_2, .0001, Color{1,1,1}))
 
 	// Earth
@@ -101,9 +104,12 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 	append(&world_list, sphere_new_still({400,200,400}, 100, &mat_earth))
 
 	// ?
-	boundary := sphere_new_still({360,150,145}, 70, &mat_boundary)
+	boundary := sphere_new_still({360,150,145}, 70, &mat_dielectric)
 	append(&world_list, boundary)
 	append(&world_list, constant_medium_new(&boundary, 0.2, Color{0.2,0.4,0.9}))
+
+	// Glassy sphere
+	append(&world_list, sphere_new_still({260,150,45}, 50, &mat_dielectric))
 
 	// ?
 	tex_per := texture_noise_new(0.2)
@@ -868,25 +874,49 @@ camera_defocus_disk_sample :: proc(cam: Camera) -> v3{
 	return cam.center + (p[0] * cam.defocus_disk_u) + (p[1] * cam.defocus_disk_v)
 }
 
+g_cam: Camera
+g_out_buffer: []Color
+g_world: Hittable
+
 camera_render :: proc(cam: ^Camera, world: Hittable) {
+	g_out_buffer = make([]Color, cam.image_width * cam.image_height)
+	g_cam = cam^
+	g_world = world
+
+	thread_main :: proc(tid: int) {
+		thread_count := os.get_processor_core_count()
+		pixels_per_thread := (g_cam.image_height * g_cam.image_width) / thread_count
+		pixel_start := tid * pixels_per_thread
+
+		for p in pixel_start..<pixel_start + pixels_per_thread {
+			pixel_color : Color 
+			for _ in 0 ..< g_cam.samples_per_pixel {
+				r: Ray = camera_get_ray(g_cam, p % g_cam.image_width, p / g_cam.image_width)
+				pixel_color += camera_ray_color(g_cam, r, g_cam.max_depth, g_world)
+			}
+			g_out_buffer[p] = g_cam.pixel_samples_scale * pixel_color
+		}
+	}
+
+	thread_count := os.get_processor_core_count()
+	threads := make([]^thread.Thread, thread_count)
+
+	for &t, i in threads {
+		t = thread.create_and_start_with_poly_data(i, thread_main)
+	}
+
+	thread.join_multiple(..threads)
+
+	for &t in threads {
+		thread.destroy(t)
+	}
+
+	// Writing Image File
 
 	fmt.sbprintf(&cam.sb, "P3\n%v %v\n255\n", cam.image_width, cam.image_height)
 
-	for j:= 0; j < cam.image_height ; j += 1 {
-
-		fmt.printfln("Scanlines remaining: %v", cam.image_height - j)
-
-		for i:= 0; i < cam.image_width ; i+= 1 {
-
-			pixel_color : Color 
-
-			for _ in 0 ..< cam.samples_per_pixel {
-				r: Ray = camera_get_ray(cam^, i, j)
-				pixel_color += camera_ray_color(cam^, r, cam.max_depth, world)
-			}
-
-			write_color(&cam.sb, cam.pixel_samples_scale * pixel_color)
-		}
+	for pixel in 0..<cam.image_width * cam.image_height {
+		write_color(&cam.sb, g_out_buffer[pixel])
 	}
 
 	fmt.printfln("Done.")
