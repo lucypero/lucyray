@@ -1824,7 +1824,7 @@ constant_medium_hit :: #force_inline proc(cm: ConstantMedium, r: Ray, ray_t: Int
 	did_hit_1 := hittable_hit(cm.boundary^, r, interval_universe, &rec1)
 	if !did_hit_1 do return false
 
-	did_hit_2 := hittable_hit(cm.boundary^, r, Interval{rec.t + 0.0001, INFINITY}, &rec2)
+	did_hit_2 := hittable_hit(cm.boundary^, r, Interval{rec1.t + 0.0001, INFINITY}, &rec2)
 	if !did_hit_2 do return false
 
 	if rec1.t < ray_t.min do rec1.t = ray_t.min
