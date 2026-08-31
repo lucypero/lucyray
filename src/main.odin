@@ -646,16 +646,16 @@ hittable_get_bounding_box :: proc(hittable: Hittable) -> AABB {
 	}
 }
 
-hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+hittable_hit :: proc(hittable: Hittable, r: Ray, ray_t: Interval, hr: ^HitRecord) -> (bool) {
 	switch inner in hittable {
-	case Sphere: return sphere_hit(inner, r, ray_t)
+	case Sphere: return sphere_hit(inner, r, ray_t, hr)
 	case AABB: return aabb_hit(inner, r, ray_t)
-	case BVH_Node: return bvh_node_hit(inner, r, ray_t)
-	case Quad:  return quad_hit(inner, r, ray_t)
-	case Translate: return translate_hit(inner, r, ray_t)
-	case Rotate_Y: return rotate_hit(inner, r, ray_t)
-	case HittableList: return hittable_list_hit(inner, r, ray_t)
-	case ConstantMedium: return constant_medium_hit(inner, r, ray_t)
+	case BVH_Node: return bvh_node_hit(inner, r, ray_t, hr)
+	case Quad:  return quad_hit(inner, r, ray_t, hr)
+	case Translate: return translate_hit(inner, r, ray_t, hr)
+	case Rotate_Y: return rotate_hit(inner, r, ray_t, hr)
+	case HittableList: return hittable_list_hit(inner, r, ray_t, hr)
+	case ConstantMedium: return constant_medium_hit(inner, r, ray_t, hr)
 	case: panic("unsupported shape")
 	}
 }
@@ -684,7 +684,7 @@ sphere_new_moving :: proc(center: Ray, rad: f32, mat: ^Material) -> Sphere {
 	return Sphere{center, rad, mat, bbox}
 }
 
-sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+sphere_hit :: #force_inline proc(sphere: Sphere, r: Ray, ray_t: Interval, rec: ^HitRecord) -> (hit: bool) {
 	current_center := ray_at(sphere.center, r.time)
 	oc := current_center - r.origin
 
@@ -694,7 +694,7 @@ sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: 
 
 	discriminant := h*h - a*c
 
-	if discriminant < 0 do return false, {}
+	if discriminant < 0 do return false
 
 	sqrtd := linalg.sqrt(discriminant)
 
@@ -703,18 +703,18 @@ sphere_hit :: proc(sphere: Sphere, r: Ray, ray_t: Interval) -> (hit: bool, rec: 
 
 	if !interval_surrounds(ray_t, root) {
 		root = (h + sqrtd) / a
-		if !interval_surrounds(ray_t, root) do return false, {}
+		if !interval_surrounds(ray_t, root) do return false
 	}
 
 	rec.t = root
 	rec.p = ray_at(r, rec.t)
 	rec.mat = sphere.mat
 	outward_normal := (rec.p - current_center) / sphere.radius
-	hr_set_face_normal(&rec, r, outward_normal)
+	hr_set_face_normal(rec, r, outward_normal)
 	u, v := sphere_get_uv(sphere, outward_normal)
 	rec.u = u
 	rec.v = v
-	return true, rec
+	return true
 }
 
 // p: a given point on the sphere of radius one, centered at the origin.
@@ -732,24 +732,6 @@ sphere_get_uv :: proc(sph: Sphere, p: point3) -> (u, v: f32) {
 
 	return
 }
-
-hit_list :: proc(hittables: []Hittable, r: Ray, interval: Interval) -> (bool, HitRecord) {
-	temp_rec : HitRecord
-	hit_anything: bool
-	closest_so_far := interval.max
-
-	for hittable in hittables {
-		did_hit, rec := hittable_hit(hittable, r, {interval.min, closest_so_far})
-		if did_hit {
-			hit_anything = true
-			closest_so_far = rec.t
-			temp_rec = rec
-		}
-	}
-
-	return hit_anything, temp_rec
-}
-
 
 degrees_to_radians :: proc(degrees: f32) -> f32 {
 	return degrees * PI / 180
@@ -998,8 +980,10 @@ camera_ray_color :: proc(cam: Camera, r: Ray, depth: int, world: Hittable) -> Co
 	// If we've exceeded the ray bounce limit, no more light is gathered.
 	if depth <= 0 do return Color{0,0,0}
 
+	rec : HitRecord
+
 	// passing a limig min w a small number to avoid shadow acne
-	hit, rec := hittable_hit(world, r, {0.001, INFINITY})
+	hit := hittable_hit(world, r, {0.001, INFINITY}, &rec)
 
 	// If we've hit nothing, we return the camera background color.
 	if !hit {
@@ -1265,7 +1249,7 @@ aabb_get_axis_interval :: proc(aabb: AABB, axis_index: int) -> Interval {
 	}
 }
 
-aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, HitRecord) {
+aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool) {
 
 	ray_t := ray_t
 
@@ -1287,11 +1271,11 @@ aabb_hit :: #force_inline proc(aabb: AABB, r: Ray, ray_t : Interval) -> (bool, H
 		}
 
 		if (ray_t.max <= ray_t.min) {
-			return false, HitRecord{}
+			return false
 		}
 	}
 
-	return true, HitRecord{}
+	return true
 }
 
 BVH_Node :: struct {
@@ -1356,24 +1340,24 @@ bvh_node_new :: proc(objects: []Hittable, allocator : ^mv.Arena) -> (res_hittabl
 	return
 }
 
-bvh_node_hit :: proc(bvh_node: BVH_Node, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+bvh_node_hit :: #force_inline proc(bvh_node: BVH_Node, r: Ray, ray_t: Interval, hr: ^HitRecord) -> (bool) {
 
-	if did_hit, _ := aabb_hit(bvh_node.bbox, r, ray_t); !did_hit {
-		return false, HitRecord{}
+	if did_hit := aabb_hit(bvh_node.bbox, r, ray_t); !did_hit {
+		return false
 	}
 
-	hit_left, rec := hittable_hit(bvh_node.left^, r, ray_t)
-	hit_right, rec2 := hittable_hit(bvh_node.right^, r, Interval{ray_t.min, hit_left ? rec.t : ray_t.max})
+	hit_left := hittable_hit(bvh_node.left^, r, ray_t, hr)
+	hit_right := hittable_hit(bvh_node.right^, r, Interval{ray_t.min, hit_left ? hr.t : ray_t.max}, hr)
 
 	if hit_right {
-		return true, rec2
+		return true
 	}
 
 	if hit_left {
-		return true, rec
+		return true
 	}
 
-	return false, HitRecord{}
+	return false
 }
 
 arena_new :: proc() -> mv.Arena {
@@ -1647,17 +1631,16 @@ quad_set_bounding_box :: proc(quad: ^Quad) {
 	quad.bbox = aabb_union(bbox_diagonal1, bbox_diagonal2)
 }
 
-quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
-
+quad_hit :: #force_inline proc(quad: Quad, r: Ray, ray_t: Interval, rec: ^HitRecord) -> (hit: bool) {
 
 	denom := linalg.dot(quad.normal, r.direction)
 
 	// No hit if the ray is parallel to the plane.
-	if abs(denom) < 1e-8 do return false, rec
+	if abs(denom) < 1e-8 do return false
 
 	// Return false if the hit point parameter t is outside the ray interval.
 	t := (quad.D - linalg.dot(quad.normal, r.origin)) / denom
-	if !interval_contains(ray_t, t) do return false, rec
+	if !interval_contains(ray_t, t) do return false
 
 
 	// Determine if the hit point lies within the planar shape using its plane coordinates.
@@ -1671,7 +1654,7 @@ quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRec
 
 	// Given the hit point in plane coordinates, return false if it is outside the
 	// primitive, otherwise set the hit record UV coordinates and return true.
-	if !interval_contains(unit_interval, alpha) || !interval_contains(unit_interval, beta) do return false, rec
+	if !interval_contains(unit_interval, alpha) || !interval_contains(unit_interval, beta) do return false
 
 	// Ray hits the 2D shape; set the rest of the hit record and return true.
 	rec.u = alpha
@@ -1680,9 +1663,9 @@ quad_hit :: proc(quad: Quad, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRec
 	rec.p = intersection
 	rec.mat = quad.mat
 
-	hr_set_face_normal(&rec, r, quad.normal)
+	hr_set_face_normal(rec, r, quad.normal)
 
-	return true, rec
+	return true
 }
 
 Translate :: struct {
@@ -1701,20 +1684,20 @@ translate_new :: proc(object: ^Hittable, offset: v3) -> (hittable: Hittable) {
 	return res
 }
 
-translate_hit :: proc(translate: Translate, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+translate_hit :: #force_inline proc(translate: Translate, r: Ray, ray_t: Interval, hr: ^HitRecord) -> (bool) {
 
 	// Move the ray backwards by the offset
 	ray_offset := Ray{r.origin - translate.offset, r.direction, r.time}
 
 	// Determine whether an intersection exists along the offset ray (and if so, where)
-	did_hit, hr := hittable_hit(translate.object^, ray_offset, ray_t)
+	did_hit := hittable_hit(translate.object^, ray_offset, ray_t, hr)
 
-	if  !did_hit do return false, {}
+	if  !did_hit do return false
 
 	// Move the intersection point forwards by the offset
 	hr.p += translate.offset
 
-	return true, hr
+	return true
 }
 
 Rotate_Y :: struct {
@@ -1765,7 +1748,7 @@ rotate_new :: proc(object: ^Hittable, angle: f32) -> Hittable {
 	return rot
 }
 
-rotate_hit :: proc(rotate: Rotate_Y, r: Ray, ray_t: Interval) -> (bool, HitRecord) {
+rotate_hit :: #force_inline proc(rotate: Rotate_Y, r: Ray, ray_t: Interval, rec: ^HitRecord) -> (bool) {
 
 
 	// Transform the ray from world space to object space.
@@ -1784,9 +1767,9 @@ rotate_hit :: proc(rotate: Rotate_Y, r: Ray, ray_t: Interval) -> (bool, HitRecor
 	rotated_r := Ray{origin, direction, r.time}
 
 	// Determine whether an intersection exists in object space (and if so, where).
-	did_hit, rec := hittable_hit(rotate.object^, rotated_r, ray_t)
+	did_hit := hittable_hit(rotate.object^, rotated_r, ray_t, rec)
 
-	if !did_hit do return false, {}
+	if !did_hit do return false
 
 	// Transform the intersection from object space back to world space.
 	rec.p = point3{
@@ -1801,7 +1784,7 @@ rotate_hit :: proc(rotate: Rotate_Y, r: Ray, ray_t: Interval) -> (bool, HitRecor
 		(-rotate.sin_theta * rec.normal.x) + (rotate.cos_theta * rec.normal.z)
 	}
 
-	return true, rec
+	return true
 }
 
 HittableList :: struct {
@@ -1809,15 +1792,14 @@ HittableList :: struct {
 	bbox: AABB
 }
 
-hittable_list_hit :: proc(hlist: HittableList, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+hittable_list_hit :: #force_inline proc(hlist: HittableList, r: Ray, ray_t: Interval, rec: ^HitRecord) -> (hit: bool) {
 	closest_so_far := ray_t.max
 
 	for object in hlist.objects {
-		did_hit, object_hr := hittable_hit(object, r, Interval{ray_t.min, closest_so_far})
+		did_hit := hittable_hit(object, r, Interval{ray_t.min, closest_so_far}, rec)
 		if did_hit {
 			hit = true
-			closest_so_far = object_hr.t
-			rec = object_hr
+			closest_so_far = rec.t
 		}
 	}
 
@@ -1835,25 +1817,27 @@ ConstantMedium :: struct {
 	phase_function: ^Material
 }
 
-constant_medium_hit :: proc(cm: ConstantMedium, r: Ray, ray_t: Interval) -> (hit: bool, rec: HitRecord) {
+constant_medium_hit :: #force_inline proc(cm: ConstantMedium, r: Ray, ray_t: Interval, rec: ^HitRecord) -> (hit: bool) {
 
-	did_hit_1, rec1 := hittable_hit(cm.boundary^, r, interval_universe)
-	if !did_hit_1 do return false, {}
+	rec1, rec2: HitRecord
 
-	did_hit_2, rec2 := hittable_hit(cm.boundary^, r, Interval{rec1.t + 0.0001, INFINITY})
-	if !did_hit_2 do return false, {}
+	did_hit_1 := hittable_hit(cm.boundary^, r, interval_universe, &rec1)
+	if !did_hit_1 do return false
+
+	did_hit_2 := hittable_hit(cm.boundary^, r, Interval{rec.t + 0.0001, INFINITY}, &rec2)
+	if !did_hit_2 do return false
 
 	if rec1.t < ray_t.min do rec1.t = ray_t.min
 	if rec2.t > ray_t.max do rec2.t = ray_t.max
 
-	if rec1.t >= rec2.t do return false, {}
+	if rec1.t >= rec2.t do return false
 
 	if rec1.t < 0 do rec1.t = 0
 
 	ray_length := linalg.length(r.direction)
 	distance_inside_boundary := (rec2.t - rec1.t) * ray_length
 	hit_distance := cm.neg_inv_density * linalg.ln(random_double())
-	if hit_distance > distance_inside_boundary do return false, {}
+	if hit_distance > distance_inside_boundary do return false
 
 	rec.t = rec1.t + hit_distance / ray_length
 	rec.p = ray_at(r, rec.t)
@@ -1862,7 +1846,7 @@ constant_medium_hit :: proc(cm: ConstantMedium, r: Ray, ray_t: Interval) -> (hit
 	rec.front_face = true // arbitrary
 	rec.mat = cm.phase_function
 
-	return true, rec
+	return true
 }
 
 TextureOrColor :: union #no_nil {
