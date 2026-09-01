@@ -37,6 +37,8 @@ get_scene_select :: proc() -> uint {
 main :: proc() {
 	tracy.SetThreadName("main")
 	time_start := time.now()
+	context.random_generator = rand.xoshiro256_random_generator()
+
 	switch get_scene_select() {
 	case 0: do_scene_bouncing_balls()
 	case 1: do_scene_checkered_balls()
@@ -893,6 +895,7 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 		time_start := time.now()
 		tdata := cast(^ThreadData)data
 		ar := arena_new()
+		context.random_generator = rand.xoshiro256_random_generator()
 		context.allocator = mem.panic_allocator()
 		context.temp_allocator = mv.arena_allocator(&ar)
 
