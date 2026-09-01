@@ -21,7 +21,7 @@ import tracy "../../third_party/odin-tracy"
 INFINITY :: math.INF_F32
 PI :: math.PI
 COLOR_SKY : Color : {0.70, 0.80, 1.00}
-SCENE_SELECT_DEFAULT :: 0
+SCENE_SELECT_DEFAULT :: 8
 
 v2i :: [2]int
 v3 :: [3]f32
@@ -46,7 +46,7 @@ main :: proc() {
 	case 5: do_scene_simple_light()
 	case 6: do_scene_cornell_box()
 	case 7: do_scene_cornell_smoke()
-	case 8: do_final_scene(400, 200, 5)
+	case 8: do_final_scene(200, 50, 5)
 	case 9: do_final_scene(800, 1000, 10)
 	case: panic("scene does not exist. choose another number.")
 	}
@@ -109,7 +109,7 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 	mat_earth := Material(Mat_Lambertian{&tex_earth})
 	append(&world_list, sphere_new_still({400,200,400}, 100, &mat_earth))
 
-	// ?
+	// Blue subsurface reflection sphere (we didn’t implement that explicitly, but a volume inside a dielectric is what a subsurface material is)
 	boundary := sphere_new_still({360,150,145}, 70, &mat_dielectric)
 	append(&world_list, boundary)
 	append(&world_list, constant_medium_new(&boundary, 0.2, Color{0.2,0.4,0.9}))
@@ -117,12 +117,12 @@ do_final_scene :: proc(image_width, samples_per_pixel, max_depth: int) {
 	// Glassy sphere
 	append(&world_list, sphere_new_still({260,150,45}, 50, &mat_dielectric))
 
-	// ?
+	// Perlin noise sphere (it's at the middle)
 	tex_per := texture_noise_new(0.2)
 	mat_per := Material(Mat_Lambertian{ &tex_per})
 	append(&world_list, sphere_new_still({220,280,300}, 80, &mat_per))
 
-	// Metal sphere (not sure which one it is)
+	// Metal sphere (small one on the right)
 	mat_metal := Material(Mat_Metal{Color{.8,.8,.9}, 1.0})
 	append(&world_list, sphere_new_still({0,150,145}, 50, &mat_metal))
 
@@ -893,11 +893,11 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 		time_start := time.now()
 		tdata := cast(^ThreadData)data
 		ar := arena_new()
+		context.allocator = mem.panic_allocator()
 		context.temp_allocator = mv.arena_allocator(&ar)
 
 		for {
-
-
+			// Getting the next tile to render
 			tile_i := sync.atomic_add(&g_tile_counter, 1)
 			if tile_i > g_tile_total do break
 
@@ -905,8 +905,6 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 			tile_zone_tag := fmt.tprintf("Zone %v/%v", tile_i, g_tile_total)
 			tracy.ZoneN(tile_zone_tag);
 			}
-
-
 
 			x_start := (tile_i % g_tile_x_count) * g_tile_width
 			y_start := (tile_i / g_tile_x_count) * g_tile_width
@@ -957,7 +955,7 @@ camera_render :: proc(cam: ^Camera, world: Hittable) {
 		if data.out_time_spent > tmax do tmax = data.out_time_spent
 	}
 
-	fmt.printfln("Thread timing delta: [%v,%v], magnitude: %v", tmin, tmax, tmax-tmin)
+	fmt.printfln("Thread timing min/max: [%v,%v], delta: %v", tmin, tmax, tmax-tmin)
 
 	// Writing Image File
 
