@@ -48,7 +48,7 @@ main :: proc() {
 	case 5: do_scene_simple_light()
 	case 6: do_scene_cornell_box()
 	case 7: do_scene_cornell_smoke()
-	case 8: do_final_scene(200, 50, 5)
+	case 8: do_final_scene(400, 100, 5)
 	case 9: do_final_scene(800, 1000, 10)
 	case: panic("scene does not exist. choose another number.")
 	}
@@ -1046,12 +1046,9 @@ random_int :: proc(min, max: int) -> int {
 }
 
 random_in_unit_disk :: proc() -> v3 {
-	for {
-		p := v3{random_double(-1,1), random_double(-1,1), 0}
-		if (linalg.length2(p) < 1) {
-			return p
-		}
-	}
+	theta := random_double(0, 2 * linalg.PI)
+	r := linalg.sqrt(random_double())
+	return v3{r * linalg.cos(theta), r * linalg.sin(theta), 0}
 }
 
 v3_random_one :: proc () -> v3 {
@@ -1065,11 +1062,10 @@ v3_random_range :: proc(min, max: f32) -> v3 {
 v3_random :: proc{v3_random_one, v3_random_range}
 
 v3_random_unit_vector :: proc() -> v3 {
-	for {
-		p := v3_random(-1,1)
-		lensq := linalg.length2(p)
-		if (1e-160 < lensq && lensq <= 1) do return p / linalg.sqrt(lensq)
-	}
+	z := 1 - 2 * random_double()
+	r := linalg.sqrt(max(0, 1 - z * z))
+	theta := random_double(0, 2 * linalg.PI)
+	return v3{r * linalg.cos(theta), r * linalg.sin(theta), z}
 }
 
 v3_is_near_zero :: proc(v: v3) -> bool {
