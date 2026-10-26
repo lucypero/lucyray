@@ -1,0 +1,126 @@
+package collage
+
+import "core:fmt"
+import "core:image"
+import _ "core:image/jpeg"
+import _ "core:image/netpbm"
+import _ "core:image/png"
+import "core:math"
+import "core:os"
+import "core:strconv"
+import "core:strings"
+import stbi "vendor:stb/image"
+
+USAGE :: `usage: collage [-cols N] [-gap PX] [-o out.png] image1 image2 ...
+
+Lays images out in a grid (default: as square as possible, so 4 images -> 2x2).
+Every cell is the size of the first image; other images are scaled to fit and centered.
+Supports .png, .jpg and .ppm inputs. Output is always PNG.`
+
+// Loaded image converted to tightly packed 8-bit RGB.
+RGB :: struct {
+	w, h:   int,
+	pixels: []u8,
+}
+
+load_rgb :: proc(path: string) -> (out: RGB, ok: bool) {
+	img, err := image.load_from_file(path)
+	if err != nil {
+		fmt.eprintfln("failed to load %s: %v", path, err)
+		return
+	}
+	defer image.destroy(img)
+
+	out = {img.width, img.height, make([]u8, img.width * img.height * 3)}
+	src := img.pixels.buf[:]
+	bpc := img.depth / 8 // bytes per channel; for 16-bit take the high byte
+	for i in 0 ..< img.width * img.height {
+		for c in 0 ..< 3 {
+			sc := min(c, img.channels - 1) // grayscale -> replicate
+			if img.channels == 2 do sc = 0 // gray + alpha
+			idx := (i * img.channels + sc) * bpc
+			out.pixels[i * 3 + c] = bpc == 2 ? src[idx + (ODIN_ENDIAN == .Little ? 1 : 0)] : src[idx]
+		}
+	}
+	return out, true
+}
+
+main :: proc() {
+	cols, gap := 0, 0
+	out_path := "collage.png"
+	inputs: [dynamic]string
+
+	args := os.args[1:]
+	for i := 0; i < len(args); i += 1 {
+		switch args[i] {
+		case "-h", "-help", "--help":
+			fmt.println(USAGE)
+			return
+		case "-cols", "-gap", "-o":
+			if i + 1 >= len(args) {
+				fmt.eprintfln("%s needs a value\n\n%s", args[i], USAGE)
+				os.exit(1)
+			}
+			flag := args[i]
+			i += 1
+			if flag == "-o" {
+				out_path = args[i]
+				continue
+			}
+			n, ok := strconv.parse_int(args[i])
+			if !ok || n < 0 {
+				fmt.eprintfln("bad value for %s: %s", flag, args[i])
+				os.exit(1)
+			}
+			if flag == "-cols" do cols = n
+			else do gap = n
+		case:
+			append(&inputs, args[i])
+		}
+	}
+
+	if len(inputs) == 0 {
+		fmt.eprintln(USAGE)
+		os.exit(1)
+	}
+	if cols == 0 do cols = int(math.ceil(math.sqrt(f64(len(inputs)))))
+	cols = min(cols, len(inputs))
+	rows := (len(inputs) + cols - 1) / cols
+
+	images := make([]RGB, len(inputs))
+	for path, i in inputs {
+		ok: bool
+		if images[i], ok = load_rgb(path); !ok do os.exit(1)
+	}
+
+	cell_w, cell_h := images[0].w, images[0].h
+	out_w := cols * cell_w + (cols - 1) * gap
+	out_h := rows * cell_h + (rows - 1) * gap
+	canvas := make([]u8, out_w * out_h * 3) // black background
+
+	for img, i in images {
+		// Scale to fit the cell while keeping aspect ratio.
+		scale := min(f64(cell_w) / f64(img.w), f64(cell_h) / f64(img.h))
+		w := max(1, int(math.round(f64(img.w) * scale)))
+		h := max(1, int(math.round(f64(img.h) * scale)))
+		pixels := img.pixels
+		if w != img.w || h != img.h {
+			pixels = make([]u8, w * h * 3)
+			stbi.resize_uint8(raw_data(img.pixels), i32(img.w), i32(img.h), 0, raw_data(pixels), i32(w), i32(h), 0, 3)
+		}
+
+		x0 := (i % cols) * (cell_w + gap) + (cell_w - w) / 2
+		y0 := (i / cols) * (cell_h + gap) + (cell_h - h) / 2
+		for y in 0 ..< h {
+			dst := ((y0 + y) * out_w + x0) * 3
+			copy(canvas[dst:dst + w * 3], pixels[y * w * 3:(y + 1) * w * 3])
+		}
+	}
+
+	cpath := strings.clone_to_cstring(out_path)
+	if stbi.write_png(cpath, i32(out_w), i32(out_h), 3, raw_data(canvas), i32(out_w * 3)) == 0 {
+		fmt.eprintfln("failed to write %s", out_path)
+		os.exit(1)
+	}
+	fmt.printfln("wrote %s (%dx%d, %dx%d grid)", out_path, out_w, out_h, cols, rows)
+}

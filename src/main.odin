@@ -16,7 +16,8 @@ import "core:math"
 import "core:math/rand"
 import "core:time"
 import stbi "vendor:stb/image"
-import tracy "../../third_party/odin-tracy"
+
+// import tracy "../../third_party/odin-tracy"
 
 INFINITY :: math.INF_F32
 PI :: math.PI
@@ -35,7 +36,9 @@ get_scene_select :: proc() -> uint {
 }
 
 main :: proc() {
+	when TRACY_ENABLE{
 	tracy.SetThreadName("main")
+	}
 	time_start := time.now()
 	context.random_generator = rand.xoshiro256_random_generator()
 
