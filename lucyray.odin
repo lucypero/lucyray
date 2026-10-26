@@ -1,6 +1,8 @@
 package lucyray
 
 TRACY_ENABLE :: #config(TRACY_ENABLE, false)
+// Uncomment when wanting to mess with tracy.
+// import tracy "../../third_party/odin-tracy"
 
 import "core:sync"
 import "core:thread"
@@ -17,7 +19,6 @@ import "core:math/rand"
 import "core:time"
 import stbi "vendor:stb/image"
 
-// import tracy "../../third_party/odin-tracy"
 
 INFINITY :: math.INF_F32
 PI :: math.PI
@@ -341,8 +342,8 @@ do_scene_simple_light :: proc() {
 		aspect_ratio = 16.0 / 9.0,
 
 		// frame quality
-		image_width = 400,
-		samples_per_pixel = 100,
+		image_width = 800,
+		samples_per_pixel = 300,
 		max_depth = 50,
 
 		// camera parameters
@@ -564,9 +565,9 @@ do_scene_bouncing_balls :: proc() {
 
 	cam := camera_init(Camera{
 		// frame quality
-		image_width = 400,
-		samples_per_pixel = 200,
-		max_depth = 10,
+		image_width = 600,
+		samples_per_pixel = 300,
+		max_depth = 30,
 
 		// camera parameters
 		vfov = 20,
